@@ -11,6 +11,9 @@ export class Input {
         this.pendingAction = { type: 'move', payload: { dx, dy } };
       } else if (e.key === ' ') {
         this.pendingAction = { type: 'rest' };
+      } else if (e.key === 'g' || e.key === 'G') {
+        // Gather resources (trees/rocks) on current/adjacent tile
+        this.pendingAction = { type: 'gather' };
       } else if (e.key === 'c' || e.key === 'C') {
         this.classChoiceOpen = true;
       } else if (e.key === '1') {

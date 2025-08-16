@@ -21,6 +21,9 @@ const musicToggle = document.getElementById('musicToggle');
 const classPanel = document.getElementById('classPanel');
 const spellsPanel = document.getElementById('spellsPanel');
 const spellsList = document.getElementById('spellsList');
+const settingsBtn = document.getElementById('settingsBtn');
+const settingsPanel = document.getElementById('settingsPanel');
+const gridToggle = document.getElementById('gridToggle');
 const ren = new Renderer(canvas);
 const input = new Input();
 
@@ -183,6 +186,14 @@ canvas.addEventListener('click', (e) => {
   }
 });
 
+// Right-click to gather (context menu suppressed)
+canvas.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  if (!input.casting) {
+    Net.sendAction({ type: 'gather' });
+  }
+});
+
 // Class selection buttons
 classPanel.addEventListener('click', (e) => {
   const btn = e.target.closest('.class-btn');
@@ -210,6 +221,16 @@ function renderSpells(me) {
     spellsList.appendChild(el);
   }
 }
+
+// Settings menu functionality
+settingsBtn.addEventListener('click', () => {
+  settingsPanel.classList.toggle('hidden');
+});
+
+// Grid toggle functionality  
+gridToggle.addEventListener('change', () => {
+  ren.showGrid = gridToggle.checked;
+});
 
 // Draggable panels (generic)
 function makeDraggable(panel) {
@@ -239,3 +260,4 @@ function makeDraggable(panel) {
 
 makeDraggable(classPanel);
 makeDraggable(spellsPanel);
+makeDraggable(settingsPanel);

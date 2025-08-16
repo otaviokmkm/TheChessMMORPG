@@ -10,6 +10,8 @@ button:hover{filter:brightness(1.1)}
 #hud .music{user-select:none}
 .admin-btn{background:#b02525}
 .admin-btn:hover{filter:brightness(1.05)}
+.settings-btn{background:#555;font-size:1.1em;padding:.4rem .6rem}
+.settings-btn:hover{background:#666}
 
 /* Bottom HUD */
 .bottom-hud{position:absolute;left:0;right:0;bottom:0;padding:.5rem .75rem;background:linear-gradient(180deg, rgba(0,0,0,.0), rgba(0,0,0,.5));}
@@ -33,3 +35,5 @@ button:hover{filter:brightness(1.1)}
 .spell-btn{display:flex;align-items:center;gap:.5rem;width:100%;margin:.25rem 0;padding:.4rem .5rem;border:1px solid #3a3a3a;background:#1e1e1e;color:#eee;border-radius:6px;cursor:pointer}
 .spell-btn:hover{background:#2a2a2a}
 .badge{font-size:.75em;color:#bbb;background:#242424;border:1px solid #333;border-radius:4px;padding:.05rem .3rem}
+.setting-item{display:block;width:100%;margin:.4rem 0;padding:.3rem 0;cursor:pointer;user-select:none}
+.setting-item input[type="checkbox"]{margin-right:.5rem}

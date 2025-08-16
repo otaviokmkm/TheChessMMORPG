@@ -26,7 +26,8 @@
     <div id="hud">
       <label class="music"><input type="checkbox" id="musicToggle"> Music</label>
       <span id="tickInfo"></span>
-  <button id="adminWipeBtn" class="admin-btn hidden" title="Admin: reset world">Wipe World</button>
+      <button id="settingsBtn" class="settings-btn" title="Settings">⚙️</button>
+      <button id="adminWipeBtn" class="admin-btn hidden" title="Admin: reset world">Wipe World</button>
     </div>
       <div id="bottomHud" class="bottom-hud hidden">
         <div class="stat-row">
@@ -52,6 +53,17 @@
         <div id="spellsList"></div>
       </div>
       <div class="panel-foot">Click to select, or use hotkeys</div>
+    </div>
+
+    <div id="settingsPanel" class="panel hidden" style="right: 24px; top: 120px;">
+      <div class="panel-head" data-drag-handle>Settings</div>
+      <div class="panel-body">
+        <label class="setting-item">
+          <input type="checkbox" id="gridToggle"> Show Grid
+        </label>
+        <!-- Future settings will go here -->
+      </div>
+      <div class="panel-foot">Press ⚙️ to toggle</div>
     </div>
   </div>
 

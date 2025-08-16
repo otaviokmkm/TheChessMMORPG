@@ -8,6 +8,7 @@ def resolve_actions(state: GameState, actions: Dict[int, dict]):
     wants_move: Dict[int, Tuple[int,int]] = {}
     casts: Dict[int, dict] = {}
     class_select: Dict[int, str] = {}
+    gathers: Dict[int, bool] = {}
 
     # First pass: collect intents (no move+cast same tick; casting wins if both queued)
     for pid, msg in actions.items():
@@ -32,6 +33,10 @@ def resolve_actions(state: GameState, actions: Dict[int, dict]):
                 # enforce tile is free (no players or monsters)
                 if state.is_free(nx, ny):
                     wants_move[pid] = (nx, ny)
+        elif t == "gather":
+            # queue gather if not casting (casting overrides)
+            if pid not in casts:
+                gathers[pid] = True
         elif t == "rest":
             pass
         elif t == "talk":
@@ -70,6 +75,12 @@ def resolve_actions(state: GameState, actions: Dict[int, dict]):
         pl = state.players.get(winner)
         if pl:
             pl.x, pl.y = x, y
+
+    # Resolve gather before casts (instant, local)
+    for pid in gathers.keys():
+        if pid in casts:
+            continue
+        state.gather_adjacent(pid)
 
     # Resolve casts after movement (so range uses final positions)
     for pid, c in casts.items():

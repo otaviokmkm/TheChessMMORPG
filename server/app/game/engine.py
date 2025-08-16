@@ -3,13 +3,15 @@ from typing import Dict, Optional
 from fastapi import WebSocket
 import asyncio
 import json
-from .state import GameState, Monster
+from datetime import datetime
+from .state import GameState, Monster, WORLD_W, WORLD_H
 from .actions import resolve_actions, resolve_pending_spells
 from ..db import SessionLocal
 
 class GameEngine:
-    def __init__(self, tick_seconds: float = 3.0):
+    def __init__(self, tick_seconds: float = 1.0, debug: bool = False):
         self.tick_seconds = tick_seconds
+        self.debug = debug
         self.state = GameState()
         self.tick_index = 0
         self._connections: Dict[int, WebSocket] = {}
@@ -55,12 +57,36 @@ class GameEngine:
         self._action_queue[player_id] = msg
 
     async def run(self):
+        # Startup diagnostics
+        try:
+            print(f"INFO: Game loop starting with tick_seconds={self.tick_seconds}", flush=True)
+        except Exception:
+            pass
+        # Drift-compensated scheduler to keep a steady tick cadence ~1s
+        import time
+        next_tick = time.perf_counter()
         while True:
-            await asyncio.sleep(self.tick_seconds)
+            next_tick += self.tick_seconds
+            # Sleep until the scheduled next tick; if we're late, sleep 0
+            delay = max(0.0, next_tick - time.perf_counter())
+            if delay:
+                await asyncio.sleep(delay)
+            else:
+                # If consistently late, don't spin: reschedule from now
+                next_tick = time.perf_counter()
             await self._tick()
 
     async def _tick(self):
         async with self._lock:
+            # Tick diagnostics: helpful to verify cadence in logs
+            if self.debug:
+                try:
+                    now = datetime.now().strftime('%H:%M:%S')
+                    print(f"DEBUG: Tick {self.tick_index + 1} start at {now} (interval={self.tick_seconds}s)", flush=True)
+                except Exception:
+                    pass
+            # Ensure map exists
+            self.state.ensure_map()
             # Clear damage tracking from previous tick
             self.state.clear_tick_damage_tracking()
             
@@ -120,8 +146,9 @@ class GameEngine:
             self.state.pending_spells.clear()  # Clear pending spells too
             self.state._damage_this_tick.clear()  # Clear damage tracking
             # Reset players (keep same ids and user ids)
+            cx, cy = WORLD_W // 2, WORLD_H // 2
             for p in self.state.players.values():
-                p.x, p.y = self.state.find_free_near(1, 1)
+                p.x, p.y = self.state.find_free_near(cx, cy)
                 p.xp.clear()
                 p.clazz = None
                 p.spells.clear()
@@ -129,46 +156,54 @@ class GameEngine:
                 p.hp = 10
                 p.mp_max = 0
                 p.mp = 0
-            # Reset tick index
-            self.tick_index = 0
-            # Immediately ensure initial monsters and broadcast a fresh snapshot
-            self.state.ensure_initial_monsters()
-            self.state.enforce_no_overlap()
-            snapshot = self.state.snapshot()
-            message = json.dumps({"type": "state", "tick": self.tick_index, "state": snapshot})
-            await self._broadcast(message)
+        # Reset tick index
+        self.tick_index = 0
+        # Force map regeneration with the new bridge by clearing existing tiles
+        self.state.tiles = None
+        # Immediately ensure initial monsters and broadcast a fresh snapshot
+        self.state.ensure_map()
+        self.state.ensure_initial_monsters()
+        self.state.enforce_no_overlap()
+        snapshot = self.state.snapshot()
+        message = json.dumps({"type": "state", "tick": self.tick_index, "state": snapshot})
+        await self._broadcast(message)
 
     def _monsters_act(self):
         # Peaceful until attacked: monsters only aggro once damaged.
         players = list(self.state.players.values())
         if not players:
             return
-        print(f"DEBUG: Monsters act - {len(self.state.monsters)} monsters, {len(self.state.effects)} effects")
-        for m in self.state.monsters.values():
-            print(f"DEBUG: Monster {m.id} ({m.kind}) at ({m.x}, {m.y}) HP: {m.hp}/{m.hp_max} aggro: {m.aggro}")
-        for pos, effect in self.state.effects.items():
-            print(f"DEBUG: Effect at {pos}: {effect}")
+        if self.debug:
+            print(f"DEBUG: Monsters act - {len(self.state.monsters)} monsters, {len(self.state.effects)} effects")
+            for m in self.state.monsters.values():
+                print(f"DEBUG: Monster {m.id} ({m.kind}) at ({m.x}, {m.y}) HP: {m.hp}/{m.hp_max} aggro: {m.aggro}")
+            for pos, effect in self.state.effects.items():
+                print(f"DEBUG: Effect at {pos}: {effect}")
         # Apply any AoE effects damage baseline before moving (10 dmg). Damage may cause aggro.
         effect_damage = 10
         # Damage monsters standing in effects
         for m in list(self.state.monsters.values()):
             if (m.x, m.y) in self.state.effects:
-                print(f"DEBUG: Monster {m.id} at ({m.x}, {m.y}) taking {effect_damage} damage (HP: {m.hp}/{m.hp_max})")
+                if self.debug:
+                    print(f"DEBUG: Monster {m.id} at ({m.x}, {m.y}) taking {effect_damage} damage (HP: {m.hp}/{m.hp_max})")
                 val = self.state.effects[(m.x, m.y)]
                 ttl, src = val if isinstance(val, tuple) else (val, None)
                 m.hp = max(0, m.hp - effect_damage)
-                print(f"DEBUG: Monster {m.id} HP after damage: {m.hp}")
+                if self.debug:
+                    print(f"DEBUG: Monster {m.id} HP after damage: {m.hp}")
                 # Add floating damage number
                 self.state.add_damage_number(m.x, m.y, effect_damage)
                 if src is not None:
                     m.last_hit_by = src
                 # Getting hit triggers aggro
                 m.aggro = True
-                print(f"DEBUG: Monster {m.id} is now aggro: {m.aggro}")
+                if self.debug:
+                    print(f"DEBUG: Monster {m.id} is now aggro: {m.aggro}")
         # Damage players standing in effects (PvP enabled via AoE)
         for p in players:
             if (p.x, p.y) in self.state.effects:
-                print(f"DEBUG: Player {p.id} at ({p.x}, {p.y}) taking {effect_damage} damage")
+                if self.debug:
+                    print(f"DEBUG: Player {p.id} at ({p.x}, {p.y}) taking {effect_damage} damage")
                 _val = self.state.effects[(p.x, p.y)]
                 p.hp = max(0, p.hp - effect_damage)
                 # Add floating damage number for players too
@@ -188,7 +223,8 @@ class GameEngine:
                         target.xp[target.clazz] = old_xp + m.xp_reward
                         # TODO: Save XP to database (temporarily disabled due to schema issue)
                         # self.state.save_player_xp(target.id, db)
-                        print(f"DEBUG: Player {target.id} gained {m.xp_reward} XP in {target.clazz} class (was {old_xp}, now {target.xp[target.clazz]})")
+                        if self.debug:
+                            print(f"DEBUG: Player {target.id} gained {m.xp_reward} XP in {target.clazz} class (was {old_xp}, now {target.xp[target.clazz]})")
                     del self.state.monsters[mid]
         finally:
             db.close()
@@ -228,7 +264,8 @@ class GameEngine:
         # Calculate distance from spawn
         dist_from_spawn = abs(monster.x - monster.spawn_x) + abs(monster.y - monster.spawn_y)
         
-        print(f"DEBUG: Monster {monster.id} roaming: at ({monster.x},{monster.y}), spawn ({monster.spawn_x},{monster.spawn_y}), dist {dist_from_spawn}, radius {monster.roam_radius}")
+        if self.debug:
+            print(f"DEBUG: Monster {monster.id} roaming: at ({monster.x},{monster.y}), spawn ({monster.spawn_x},{monster.spawn_y}), dist {dist_from_spawn}, radius {monster.roam_radius}")
         
         # If at the edge of roam radius, prefer moving back toward spawn
         if dist_from_spawn >= monster.roam_radius:
@@ -240,13 +277,15 @@ class GameEngine:
                 nx, ny = monster.x + dx, monster.y
                 if self.state.is_free(nx, ny):
                     monster.x, monster.y = nx, ny
-                    print(f"DEBUG: Monster {monster.id} moved toward spawn: ({nx}, {ny})")
+                    if self.debug:
+                        print(f"DEBUG: Monster {monster.id} moved toward spawn: ({nx}, {ny})")
                     return
             if dy != 0:
                 nx, ny = monster.x, monster.y + dy
                 if self.state.is_free(nx, ny):
                     monster.x, monster.y = nx, ny
-                    print(f"DEBUG: Monster {monster.id} moved toward spawn: ({nx}, {ny})")
+                    if self.debug:
+                        print(f"DEBUG: Monster {monster.id} moved toward spawn: ({nx}, {ny})")
                     return
         else:
             # Random movement within allowed area
@@ -259,7 +298,8 @@ class GameEngine:
                 new_dist = abs(nx - monster.spawn_x) + abs(ny - monster.spawn_y)
                 if new_dist <= monster.roam_radius and self.state.is_free(nx, ny):
                     monster.x, monster.y = nx, ny
-                    print(f"DEBUG: Monster {monster.id} roamed randomly: ({nx}, {ny})")
+                    if self.debug:
+                        print(f"DEBUG: Monster {monster.id} roamed randomly: ({nx}, {ny})")
                     break
 
     async def _broadcast(self, text: str):
@@ -271,10 +311,10 @@ class GameEngine:
                 pass
 
     def _respawn_dead_players(self):
-        """Respawn players at spawn (1,1). If spawn is occupied by a slime, the player dies immediately.
+        """Respawn players at spawn (center). If spawn is occupied by a slime, the player dies immediately.
         Do not attempt multiple respawns within the same tick to avoid loops.
         """
-        SPAWN_X, SPAWN_Y = 1, 1
+        SPAWN_X, SPAWN_Y = WORLD_W // 2, WORLD_H // 2
         for p in self.state.players.values():
             if p.hp <= 0:
                 # Respawn at spawn space
@@ -294,7 +334,8 @@ class GameEngine:
             ttl -= 1
             if ttl <= 0:
                 expired.append(k)
-                print(f"DEBUG: Effect at {k} expired")
+                if self.debug:
+                    print(f"DEBUG: Effect at {k} expired")
             else:
                 self.state.effects[k] = (ttl, src)
         for k in expired:

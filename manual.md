@@ -8,15 +8,16 @@ This manual explains the architecture and how to extend the prototype. It should
   - `auth.py`: JWT login/register, SQLite tables
   - `db.py`, `models.py`: SQLAlchemy setup and User model
   - `schemas.py`: Pydantic request/WS message models
-  - `game/engine.py`: tick loop, authoritative action resolution
-  - `game/state.py`: world and player state
+  - `game/engine.py`: tick loop (1s per tick), authoritative action resolution
+  - `game/state.py`: world, terrain (tiles), resources (trees/rocks), and player state
   - `game/actions.py`: simultaneous resolution rules
-    - Supports class selection (mage) and casting (fireball) with move/cast exclusivity per tick.
+    - Supports class selection (mage), casting (fireball), gathering, with move/cast/gather exclusivity per tick (cast overrides move/gather).
 - Client: `client`
   - `index.html`, `style.css`
   - `js/net.js`: auth + websocket (same-origin `fetch` and WS)
   - `js/renderer.js`: canvas render and camera follow (ES modules)
     - Rendering decoupled from state updates; `update()` only applies data, while `draw()` is called by the animation loop.
+    - Terrain rendering: grass and water tiles (no grid lines). Trees and rocks are drawn with small HP pips.
     - Targeting preview colors: in-range = warm yellow, out-of-range = muted red; pulsing alpha while targeting; brief green flash on confirm.
   - `js/input.js`: keyboard -> actions (ES modules)
   - `js/main.js`: glue, HUD (loaded as `type="module"`)
@@ -24,15 +25,27 @@ This manual explains the architecture and how to extend the prototype. It should
     - Smooth 60 FPS render loop via `requestAnimationFrame`; spell area/range preview updates continuously between server ticks.
     - After selecting a valid target, the selected spell area remains visible until the next server tick, then clears automatically.
 $env:ADMIN_USERS = 'admin'
-Gameplay loop: every 3s the server resolves queued actions and broadcasts a state snapshot; the client renders it. One action per tick; clients send intents via WS; server validates moves (bounds/occupancy) and applies results simultaneously.
+Gameplay loop: every 1s the server resolves queued actions and broadcasts a state snapshot; the client renders it. One action per tick; clients send intents via WS; server validates moves (bounds/occupancy/terrain/resources) and applies results simultaneously.
 
-Rules
+World & Rules
 - Action exclusivity per tick: a character cannot both move and cast in the same tick. If both are attempted, casting takes precedence and the move is ignored for that tick.
 - Tile occupancy: no two units (players or monsters) can occupy the same tile. Player moves to occupied tiles are rejected; simultaneous moves to the same tile resolve deterministically (lowest player id wins).
 - Slimes are peaceful until attacked: they do nothing until they take damage, then they aggro the nearest player.
  - Overlap self-heal: if a legacy bug ever leaves a monster on the same tile as a player, the server relocates the monster to the nearest free tile on the next tick.
  - PvP damage: players are affected by AoE spell tiles (e.g., Fireball) and take damage if standing in an effect.
- - Death and respawn: when a player's HP reaches 0, they respawn at spawn (1,1) with full HP. If a slime occupies the spawn tile at that moment, the player immediately dies (lethal spawn hazard).
+ - Death and respawn: when a player's HP reaches 0, they respawn at world center with full HP. If a slime occupies the spawn tile at that moment, the player immediately dies (lethal spawn hazard).
+ - Terrain: the world is a forest with a large pond.
+   - Tiles: `G` = grass (walkable), `W` = water (not walkable).
+   - Resources: trees and rocks are placed on grass tiles; they block movement until gathered. Each has small HP and is removed on depletion.
+ - Gathering: press `G` or right-click the canvas (when not casting) to gather a resource on your tile or adjacent (N/E/S/W). Each gather reduces resource HP by 1; when HP reaches 0 the resource disappears.
+
+Server snapshot fields
+- `world`: `{ w, h }`
+- `tiles`: array of strings (`'G'`/`'W'`) for each row
+- `players`: positions/stats
+- `monsters`: positions/stats
+- `resources`: list of `{ x, y, type: 'tree'|'rock', hp }`
+- `effects`, `pendingSpells`, `damageNumbers`
 
 Add classes: augment `state.Player` with class levels/xp and add leveling logic in `actions.py`.
 
@@ -44,7 +57,11 @@ Run with F5
  - Press F6 to stop the running server task (or stop debugging if active).
 
 Changelog
-- Core: Increased tick duration to 3 seconds. Prevented multiple units from occupying the same tile; simultaneous player collisions resolve deterministically. Slimes remain peaceful until attacked, then aggro. (2025-08-16)
+- World: Added forest tilemap with a large pond; water is impassable. Server now streams `tiles` and `resources` to clients. (2025-08-16)
+- Resources: Trees and rocks spawn across grass. They block movement and are gatherable (G key or right-click); each gather reduces HP; removed when depleted. (2025-08-16)
+- Tick rate: Server tick speed set to 1 second. (2025-08-16)
+- UI: Removed grid lines; added resource rendering with HP pips. (2025-08-16)
+- Core: Reverted tick duration back to 1 second and implemented a drift-compensated scheduler. Disabled verbose debug logs by default to prevent slow ticks. Prevented multiple units from occupying the same tile; simultaneous player collisions resolve deterministically. Slimes remain peaceful until attacked, then aggro. (2025-08-16)
 - Bugfix: Added server-side enforcement to relocate any monster overlapping a player to the nearest free tile each tick (and after admin wipes). (2025-08-16)
 - Combat: Players now take damage from AoE effects (friendly fire/PvP enabled). (2025-08-16)
 - Combat: Player death/respawn implemented. Respawn at (1,1); if a slime is at spawn, respawn is lethal immediately. (2025-08-16)
@@ -61,9 +78,11 @@ Changelog
 - Enhanced damage numbers: Now fade out smoothly like Ragnarok Online with scaling effects and smooth opacity transitions. (2025-08-16)
 - Dodge mechanics: Spells now have a 1-tick delay before hitting. Enemies (players and monsters) can avoid damage by moving out of the original cast range after a spell is cast but before it resolves. Pending spells show orange warning indicators with countdown timers. (2025-08-16)
 - Fixed damage numbers: Damage numbers now only appear once when damage is dealt, preventing duplicates and repetition. Server now tracks damage per tick to prevent multiple numbers from appearing for the same damage instance. (2025-08-16)
+- World: Added a 2-tile wide bridge connecting the central island to the mainland, allowing players to escape from being trapped in the lake. Bridge is generated during map creation and visible after admin world wipe. (2025-08-16)
+- UI: Added settings menu with gear icon (⚙️) in the HUD. Initial setting: Grid toggle to show/hide tile grid lines. Settings panel is draggable like other panels. (2025-08-16)
 
 Admin World Wipe (2025-08-16)
-- Added admin-only HTTP endpoint `POST /admin/wipe` that resets the in-memory world state: clears monsters and effects, resets all players to spawn with base stats (hp/mp), clears class, spells, and xp; preserves user accounts (usernames/passwords in DB untouched).
+- Added admin-only HTTP endpoint `POST /admin/wipe` that resets the in-memory world state: clears monsters and effects, resets all players to spawn with base stats (hp/mp), clears class, spells, and xp; preserves user accounts (usernames/passwords in DB untouched). Map tiles/resources are preserved.
 - Added client HUD button "Wipe World" shown only to admins (based on `/auth/me` which returns `{ id, username, is_admin }`). The button asks for double confirmation and calls the endpoint with the bearer token.
 - Admin definition: set environment variable `ADMIN_USERS` to a comma-separated list of usernames (default: `admin`). Example: `ADMIN_USERS=admin,gm1`.
 - Abuse prevention: server enforces admin check on `/admin/wipe`. Non-admins receive 403. Hiding the button in the client is cosmetic only; authorization is server-side.

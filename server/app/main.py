@@ -23,10 +23,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-engine = GameEngine(tick_seconds=3.0)
+# Keep tick at 1s and enable debug logs temporarily to diagnose timing
+engine = GameEngine(tick_seconds=1.0, debug=True)
 
 @app.on_event("startup")
 async def on_startup():
+    # Ensure map exists before engine loop
+    engine.state.ensure_map()
     asyncio.create_task(engine.run())
 
 @app.get("/")

@@ -10,17 +10,24 @@ export class Renderer {
     this.effects = [];
     this.pendingSpells = []; // Spells that are about to resolve (for dodge mechanics)
     this.targetPreview = null; // {cells: [{x,y}], type: 'fireball'}
-    this.damageNumbers = []; // [{x, y, numbers: [{damage, ttl, id, serverTick}]}]
-    this.damageNumberHistory = new Set(); // Track IDs of damage numbers we've already shown
-    this.lastServerDamageState = null; // Track last server state hash
-    this.currentServerTick = 0; // Track server ticks to prevent duplicates
+    this.damageNumbers = []; // [{x, y, numbers: [{damage, ttl, clientStartTTL}]}]
+    // Dedupe damage numbers so they only appear when damage happens (not every server snapshot)
+    // Map key: "x,y,damage" -> expiresAt (performance.now() timestamp)
+    this.seenDamageNumbers = new Map();
     
     // Code-based explosion animations (60 FPS, Tibia-style)
     this.explosionAnimations = []; // [{x, y, frame, maxFrames, startTime, type}]
     this.animationFrameId = null;
+    this.tiles = [];
+    this.resources = [];
+    
+    // Settings
+    this.showGrid = false;
   }
   update(state, myId, serverTick = 0) {
     this.world = state.world;
+  this.tiles = state.tiles || [];
+  this.resources = state.resources || [];
     this.players = state.players;
     this.monsters = {};
     if (state.monsters) {
@@ -29,7 +36,6 @@ export class Renderer {
       }
     }
     this.myId = myId;
-    this.currentServerTick = serverTick;
     
     // Check for new fire effects and trigger explosion animations
     const newEffects = state.effects || [];
@@ -57,46 +63,34 @@ export class Renderer {
     this.effects = newEffects;
     this.pendingSpells = state.pendingSpells || [];
     
-    // Better damage number management - prevent old numbers from reappearing
+    // Handle damage numbers - only show once at impact, ignore repeated server snapshots
     if (state.damageNumbers && Array.isArray(state.damageNumbers)) {
-      const serverStateHash = JSON.stringify(state.damageNumbers);
-      
-      // If server state changed, process the new damage numbers
-      if (serverStateHash !== this.lastServerDamageState) {
-        this.lastServerDamageState = serverStateHash;
-        
-        // Process new damage numbers from server
-        for (const serverGroup of state.damageNumbers) {
-          // Clear any existing damage numbers at this position to prevent old numbers from mixing with new
-          this.damageNumbers = this.damageNumbers.filter(g => !(g.x === serverGroup.x && g.y === serverGroup.y));
-          
-          // Create new damage group for this position
-          const dmgGroup = { x: serverGroup.x, y: serverGroup.y, numbers: [] };
-          
-          for (const serverNumber of serverGroup.numbers) {
-            // Create unique ID for each damage number based on position, damage, TTL, and server tick
-            const numberId = `${serverGroup.x},${serverGroup.y},${serverNumber.damage},${serverNumber.ttl},${this.currentServerTick}`;
-            
-            // Always add new server damage numbers (they're authoritative)
-            this.damageNumberHistory.add(numberId);
-            
-            // Add the damage number with unique ID and server tick
+      // Server creates new damage numbers with ttl ~60 and decrements once per server tick.
+      // Treat entries as "new" only when ttl is near the initial value to avoid repeats.
+      const NEW_TTL_THRESHOLD = 59; // server default is 60 in add_damage_number
+      for (const serverGroup of state.damageNumbers) {
+        for (const serverNumber of serverGroup.numbers) {
+          if (serverNumber.ttl >= NEW_TTL_THRESHOLD) {
+            // Freshly created this server tick -> show it once on the client
+            // (No need to track keys across time; later snapshots will have lower TTL and be ignored.)
+
+            // Find or create damage group for this position
+            let dmgGroup = this.damageNumbers.find(g => g.x === serverGroup.x && g.y === serverGroup.y);
+            if (!dmgGroup) {
+              dmgGroup = { x: serverGroup.x, y: serverGroup.y, numbers: [] };
+              this.damageNumbers.push(dmgGroup);
+            }
+
+            // Use the server-provided ttl if present, but clamp to a sensible animation length
+            const clientTTL = Math.min(60, serverNumber.ttl || 60); // ~1s at 60 FPS
             dmgGroup.numbers.push({
               damage: serverNumber.damage,
-              ttl: serverNumber.ttl,
-              id: numberId,
-              serverTick: this.currentServerTick
+              ttl: clientTTL,
+              clientStartTTL: clientTTL
             });
-          }
-          
-          if (dmgGroup.numbers.length > 0) {
-            this.damageNumbers.push(dmgGroup);
           }
         }
       }
-    } else if (state.damageNumbers === undefined || (Array.isArray(state.damageNumbers) && state.damageNumbers.length === 0)) {
-      // Server cleared damage numbers - but keep client-side ones until they expire naturally
-      this.lastServerDamageState = null;
     }
     
     const me = this.players[myId];
@@ -116,13 +110,44 @@ export class Renderer {
     // Update explosion animations (60 FPS)
     this.updateExplosionAnimations();
 
-    // draw grid
+    // draw terrain (tiles and grid)
     for (let y=0;y<this.world.h;y++) {
       for (let x=0;x<this.world.w;x++) {
         const sx = x*this.tile - this.camera.x;
         const sy = y*this.tile - this.camera.y;
-        c.strokeStyle = '#222';
-        c.strokeRect(sx, sy, this.tile, this.tile);
+        const ch = (this.tiles[y] && this.tiles[y][x]) || 'G';
+        if (ch === 'W') {
+          // water tile
+          c.fillStyle = '#1e3a5f';
+          c.fillRect(sx, sy, this.tile, this.tile);
+          // subtle waves
+          c.fillStyle = 'rgba(255,255,255,0.04)';
+          c.fillRect(sx+2, sy+2, this.tile-4, this.tile-4);
+        } else {
+          // grass tile
+          c.fillStyle = '#173018';
+          c.fillRect(sx, sy, this.tile, this.tile);
+          c.fillStyle = '#1f4820';
+          c.fillRect(sx+1, sy+1, this.tile-2, this.tile-2);
+        }
+        
+        // Draw grid lines if enabled
+        if (this.showGrid) {
+          c.strokeStyle = 'rgba(255,255,255,0.1)';
+          c.lineWidth = 1;
+          c.strokeRect(sx, sy, this.tile, this.tile);
+        }
+      }
+    }
+
+    // draw resources (trees, rocks)
+    for (const r of this.resources) {
+      const sx = r.x*this.tile - this.camera.x;
+      const sy = r.y*this.tile - this.camera.y;
+      if (r.type === 'tree') {
+        this.drawTree(c, sx, sy, this.tile, r);
+      } else if (r.type === 'rock') {
+        this.drawRock(c, sx, sy, this.tile, r);
       }
     }
 
@@ -130,8 +155,15 @@ export class Renderer {
     for (const [pid, p] of Object.entries(this.players)) {
       const sx = p.x*this.tile - this.camera.x;
       const sy = p.y*this.tile - this.camera.y;
-      c.fillStyle = String(pid) === String(this.myId) ? '#4b8df8' : '#9ade00';
-      c.fillRect(sx+4, sy+4, this.tile-8, this.tile-8);
+      const isMe = String(pid) === String(this.myId);
+
+      if (p.class === 'mage') {
+        this.drawMage(c, sx, sy, this.tile, isMe);
+      } else {
+        c.fillStyle = isMe ? '#4b8df8' : '#9ade00';
+        c.fillRect(sx+4, sy+4, this.tile-8, this.tile-8);
+      }
+
       // class tag
       if (p.class) {
         c.fillStyle = '#fff';
@@ -145,33 +177,37 @@ export class Renderer {
       for (const m of Object.values(this.monsters)) {
         const sx = m.x*this.tile - this.camera.x;
         const sy = m.y*this.tile - this.camera.y;
-        
-        // Monster body - different colors based on aggro state
-        c.fillStyle = m.aggro ? '#d35c5c' : '#7bd36d';
-        c.fillRect(sx+6, sy+6, this.tile-12, this.tile-12);
-        
+
+        // Monster body
+        if (m.type === 'slime' || (m.name && m.name.toLowerCase() === 'slime')) {
+          this.drawSlime(c, sx, sy, this.tile, m);
+        } else {
+          c.fillStyle = m.aggro ? '#d35c5c' : '#7bd36d';
+          c.fillRect(sx+6, sy+6, this.tile-12, this.tile-12);
+        }
+
         // Health bar above monster
         if (m.hpMax > 0) {
           const barWidth = this.tile - 4;
           const barHeight = 3;
           const barX = sx + 2;
           const barY = sy - 6;
-          
+
           // Background (red)
           c.fillStyle = '#8b1a1a';
           c.fillRect(barX, barY, barWidth, barHeight);
-          
+
           // Foreground (health)
           const pct = Math.max(0, Math.min(1, m.hp / m.hpMax));
           c.fillStyle = pct > 0.5 ? '#2faa24' : (pct > 0.2 ? '#aa8224' : '#aa2424');
           c.fillRect(barX, barY, barWidth * pct, barHeight);
-          
+
           // Border
           c.strokeStyle = '#333';
           c.lineWidth = 1;
           c.strokeRect(barX, barY, barWidth, barHeight);
         }
-        
+
         // Monster name
         if (m.name) {
           c.fillStyle = '#fff';
@@ -310,11 +346,8 @@ export class Renderer {
         const num = dmgGroup.numbers[j];
         num.ttl--;
         
-        // Remove expired numbers and their history
+        // Remove expired numbers and clean up tracking
         if (num.ttl <= 0) {
-          if (num.id) {
-            this.damageNumberHistory.delete(num.id);
-          }
           dmgGroup.numbers.splice(j, 1);
         }
       }
@@ -323,25 +356,6 @@ export class Renderer {
       if (dmgGroup.numbers.length === 0) {
         this.damageNumbers.splice(i, 1);
       }
-    }
-    
-    // Clean up old history entries aggressively to prevent memory issues and reappearing numbers
-    if (this.currentServerTick > 0 && this.damageNumberHistory.size > 50) {
-      // Clear history of damage numbers older than 10 server ticks
-      const currentTick = this.currentServerTick;
-      const toDelete = [];
-      
-      this.damageNumberHistory.forEach(id => {
-        const parts = id.split(',');
-        if (parts.length >= 5) {
-          const tickFromId = parseInt(parts[4]);
-          if (!isNaN(tickFromId) && (currentTick - tickFromId) > 10) {
-            toDelete.push(id);
-          }
-        }
-      });
-      
-      toDelete.forEach(id => this.damageNumberHistory.delete(id));
     }
   }
   
@@ -457,6 +471,266 @@ export class Renderer {
       ctx.fillRect(x + 4, y + 4, size - 8, size - 8);
       
       ctx.restore();
+    }
+  }
+
+  // --- Slime rendering ---
+  drawSlime(ctx, x, y, size, m) {
+    const t = performance.now() / 1000;
+    const wobble = Math.sin(t * 6 + (m.id || 0)) * 0.06; // gentle wobble
+    const squish = 1 - Math.abs(wobble) * 0.2;
+
+    // Body bounds inside tile
+    const pad = 3;
+    const w = size - pad * 2;
+    const h = size - pad * 2;
+    const cx = x + size / 2;
+    const cy = y + size / 2 + 2; // slightly lower for cute look
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.scale(1 + wobble, squish);
+
+    // Base blob shape
+    const rw = w / 2; // radius width
+    const rh = h / 2; // radius height
+
+    // Gradient fill (green -> teal); red tint if aggro
+    const g = ctx.createRadialGradient(0, -rh * 0.2, rw * 0.2, 0, 0, rw);
+    if (m.aggro) {
+      g.addColorStop(0, 'rgba(255,120,120,0.95)');
+      g.addColorStop(1, 'rgba(200,60,60,0.9)');
+    } else {
+      g.addColorStop(0, 'rgba(130, 255, 180, 0.95)');
+      g.addColorStop(1, 'rgba(60, 190, 140, 0.9)');
+    }
+
+    ctx.beginPath();
+    this.roundedBlobPath(ctx, 0, 0, rw, rh);
+    ctx.fillStyle = g;
+    ctx.fill();
+
+    // Border
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = m.aggro ? '#7a2222' : '#1b5e3e';
+    ctx.stroke();
+
+    // Slimy shine
+    ctx.save();
+    ctx.globalAlpha = 0.35;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.ellipse(-rw * 0.25, -rh * 0.35, rw * 0.35, rh * 0.18, -0.3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // Eyes
+    const eyeY = -rh * 0.1;
+    this.drawEye(ctx, -rw * 0.25, eyeY, rw * 0.12);
+    this.drawEye(ctx,  rw * 0.25, eyeY, rw * 0.12);
+
+    // Mouth (small smile or flat if aggro)
+    ctx.beginPath();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#0a0a0a';
+    if (!m.aggro) {
+      ctx.arc(0, rh * 0.18, rw * 0.25, 0.15*Math.PI, 0.85*Math.PI);
+    } else {
+      ctx.moveTo(-rw * 0.2, rh * 0.2);
+      ctx.lineTo(rw * 0.2, rh * 0.2);
+    }
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  roundedBlobPath(ctx, cx, cy, rw, rh) {
+    // Slightly bumpy blob outline
+    const k = 0.552284749831; // circle approximation factor
+    ctx.moveTo(cx, cy - rh);
+    ctx.bezierCurveTo(
+      cx + k*rw*0.6, cy - rh,
+      cx + rw, cy - k*rh*0.6,
+      cx + rw, cy
+    );
+    ctx.bezierCurveTo(
+      cx + rw, cy + k*rh,
+      cx + k*rw*0.6, cy + rh,
+      cx, cy + rh
+    );
+    ctx.bezierCurveTo(
+      cx - k*rw, cy + rh,
+      cx - rw, cy + k*rh,
+      cx - rw, cy
+    );
+    ctx.bezierCurveTo(
+      cx - rw, cy - k*rh*0.6,
+      cx - k*rw*0.6, cy - rh,
+      cx, cy - rh
+    );
+    ctx.closePath();
+  }
+
+  drawEye(ctx, ex, ey, r) {
+    ctx.save();
+    // White
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.ellipse(ex, ey, r, r*1.05, 0, 0, Math.PI*2);
+    ctx.fill();
+    // Pupil tracks wobble slightly
+    const t = performance.now() / 1000;
+    const px = ex + Math.sin(t*2 + ex*3) * r*0.25;
+    const py = ey + Math.cos(t*2 + ex*2) * r*0.18;
+    ctx.fillStyle = '#0a0a0a';
+    ctx.beginPath();
+    ctx.arc(px, py, r*0.45, 0, Math.PI*2);
+    ctx.fill();
+    // Tiny highlight
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(px - r*0.15, py - r*0.15, r*0.12, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // --- Mage rendering ---
+  drawMage(ctx, x, y, size, isMe) {
+    const pad = 3;
+    const w = size - pad * 2;
+    const h = size - pad * 2;
+    const cx = x + size / 2;
+    const baseY = y + size - pad; // ground contact
+
+    // Optional self highlight ring
+    if (isMe) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(75,141,248,0.9)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.ellipse(cx, baseY - 3, w*0.35, h*0.15, 0, 0, Math.PI*2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Idle bob
+    const t = performance.now() / 1000;
+    const bob = Math.sin(t * 4 + cx) * 1.2;
+
+    ctx.save();
+    ctx.translate(0, bob);
+
+    // Robe (red)
+    const robeTopY = y + pad + 5;
+    const robeBottomY = baseY - 4;
+    ctx.beginPath();
+    ctx.moveTo(cx - w*0.22, robeTopY);
+    ctx.lineTo(cx + w*0.22, robeTopY);
+    ctx.lineTo(cx + w*0.32, robeBottomY);
+    ctx.lineTo(cx - w*0.32, robeBottomY);
+    ctx.closePath();
+    const rg = ctx.createLinearGradient(cx, robeTopY, cx, robeBottomY);
+    rg.addColorStop(0, '#cc2b2b');
+    rg.addColorStop(1, '#7d1414');
+    ctx.fillStyle = rg;
+    ctx.fill();
+    ctx.strokeStyle = '#3a0d0d';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Collar/belt
+    ctx.fillStyle = '#f4d94a';
+    ctx.fillRect(cx - w*0.18, robeTopY + 2, w*0.36, 2);
+    ctx.fillRect(cx - w*0.16, (robeTopY + robeBottomY)/2, w*0.32, 2);
+
+    // Head
+    const headR = w * 0.16;
+    const headCx = cx;
+    const headCy = robeTopY - headR + 2;
+    ctx.beginPath();
+    ctx.arc(headCx, headCy, headR, 0, Math.PI*2);
+    ctx.fillStyle = '#f1d7c5';
+    ctx.fill();
+    ctx.strokeStyle = '#634e45';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Simple hood trim
+    ctx.beginPath();
+    ctx.moveTo(cx - w*0.22, robeTopY);
+    ctx.quadraticCurveTo(cx, robeTopY - 6, cx + w*0.22, robeTopY);
+    ctx.strokeStyle = '#5e0f0f';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+
+    // Eyes
+    ctx.fillStyle = '#222';
+    ctx.beginPath();
+    ctx.arc(headCx - headR*0.45, headCy, headR*0.18, 0, Math.PI*2);
+    ctx.arc(headCx + headR*0.45, headCy, headR*0.18, 0, Math.PI*2);
+    ctx.fill();
+
+    // Staff (right side)
+    ctx.strokeStyle = '#6b4b2a';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(cx + w*0.28, robeTopY);
+    ctx.lineTo(cx + w*0.28, robeBottomY);
+    ctx.stroke();
+    // Staff head gem
+    ctx.fillStyle = '#ffcc66';
+    ctx.beginPath();
+    ctx.arc(cx + w*0.28, robeTopY - 3, 3, 0, Math.PI*2);
+    ctx.fill();
+    ctx.strokeStyle = '#a37b3c';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  // --- Resource rendering ---
+  drawTree(ctx, x, y, size, r) {
+    const trunkW = Math.max(3, Math.floor(size * 0.18));
+    const trunkH = Math.max(6, Math.floor(size * 0.32));
+    const cx = x + size/2;
+    const baseY = y + size - 3;
+    // trunk
+    ctx.fillStyle = '#6b4f2a';
+    ctx.fillRect(cx - trunkW/2, baseY - trunkH, trunkW, trunkH);
+    // foliage (two circles)
+    const r1 = size*0.35, r2 = size*0.28;
+    ctx.fillStyle = '#2f6d2f';
+    ctx.beginPath();
+    ctx.arc(cx - r2*0.4, baseY - trunkH - r2*0.2, r2, 0, Math.PI*2);
+    ctx.arc(cx + r2*0.4, baseY - trunkH - r2*0.4, r1, 0, Math.PI*2);
+    ctx.fill();
+    // hp pips
+    const hp = r.hp ?? 1; const maxPips = 4;
+    const pips = Math.min(maxPips, Math.max(0, hp));
+    for (let i=0;i<pips;i++) {
+      ctx.fillStyle = '#7cff7c';
+      ctx.fillRect(x + 3 + i*4, y + 3, 3, 3);
+    }
+  }
+
+  drawRock(ctx, x, y, size, r) {
+    ctx.fillStyle = '#7d7f87';
+    ctx.strokeStyle = '#3d3f44';
+    const pad = 4;
+    ctx.beginPath();
+    ctx.moveTo(x+pad, y+size-pad);
+    ctx.lineTo(x+size*0.35, y+pad);
+    ctx.lineTo(x+size-pad, y+size*0.4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    // hp pips
+    const hp = r.hp ?? 1; const maxPips = 4;
+    const pips = Math.min(maxPips, Math.max(0, hp));
+    for (let i=0;i<pips;i++) {
+      ctx.fillStyle = '#d0d3da';
+      ctx.fillRect(x + 3 + i*4, y + 3, 3, 3);
     }
   }
 }

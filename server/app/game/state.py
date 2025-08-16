@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Dict, Tuple, Optional, Iterable
+from typing import Dict, Tuple, Optional, Iterable, List
 from sqlalchemy.orm import Session
 
 WORLD_W = 40
@@ -68,16 +68,81 @@ class GameState:
         self.pending_spells: list[PendingSpell] = []
         # Track damage dealt this tick to prevent duplicate numbers
         self._damage_this_tick: Dict[Tuple[int, int], int] = {}
+        # Tile map and resources
+        # tiles: list of strings with characters: 'G' (grass), 'W' (water)
+        self.tiles: Optional[List[str]] = None
+        # resources indexed by (x,y) -> {"type": "tree"|"rock", "hp": int}
+        self.resources: Dict[Tuple[int, int], Dict[str, int | str]] = {}
+
+    # -------------------- World generation --------------------
+    def ensure_map(self):
+        if self.tiles is None:
+            self._generate_forest_map()
+
+    def _generate_forest_map(self):
+        import random, math
+        # Base grass everywhere
+        grid = [['G' for _ in range(WORLD_W)] for _ in range(WORLD_H)]
+        # Big pond: ellipse near center-left
+        cx, cy = WORLD_W // 2 - 6, WORLD_H // 2
+        rx, ry = WORLD_W // 4, WORLD_H // 3
+        for y in range(WORLD_H):
+            for x in range(WORLD_W):
+                # ellipse equation (x-cx)^2/rx^2 + (y-cy)^2/ry^2 <= 1
+                dx = (x - cx) / max(1, rx)
+                dy = (y - cy) / max(1, ry)
+                if dx * dx + dy * dy <= 1.0:
+                    grid[y][x] = 'W'
+        # Keep spawn area clear (center radius 2)
+        sx, sy = WORLD_W // 2, WORLD_H // 2
+        for y in range(max(0, sy - 2), min(WORLD_H, sy + 3)):
+            for x in range(max(0, sx - 2), min(WORLD_W, sx + 3)):
+                grid[y][x] = 'G'
+        
+        # Add a small bridge to connect the island to the mainland
+        # Create a 2-tile wide horizontal bridge from the island eastward
+        bridge_y = sy  # Bridge at spawn level
+        bridge_start_x = sx + 3  # Start just outside spawn area
+        bridge_end_x = min(WORLD_W - 1, sx + 8)  # Extend to mainland
+        for x in range(bridge_start_x, bridge_end_x + 1):
+            grid[bridge_y][x] = 'G'  # Main bridge path
+            if bridge_y > 0:
+                grid[bridge_y - 1][x] = 'G'  # Make bridge 2 tiles wide for easier navigation
+        # Scatter trees and rocks over grass tiles, denser toward edges
+        self.resources.clear()
+        for y in range(WORLD_H):
+            for x in range(WORLD_W):
+                if grid[y][x] != 'G':
+                    continue
+                # Avoid very center area (radius 3) for initial breathing room
+                if abs(x - sx) + abs(y - sy) <= 3:
+                    continue
+                # Higher chance near edges
+                edge_factor = max(
+                    x, y, WORLD_W - 1 - x, WORLD_H - 1 - y
+                ) / max(WORLD_W, WORLD_H)
+                base_p = 0.08 + 0.12 * edge_factor
+                if random.random() < base_p:
+                    if random.random() < 0.7:
+                        # tree
+                        self.resources[(x, y)] = {"type": "tree", "hp": 3}
+                    else:
+                        # rock
+                        self.resources[(x, y)] = {"type": "rock", "hp": 4}
+        # Save tiles as strings
+        self.tiles = [''.join(row) for row in grid]
 
     def ensure_player(self, user_id: int) -> int:
+        # Ensure the map is generated before placing the player
+        self.ensure_map()
         # Return existing or create new at spawn
         for pid, p in self.players.items():
             if p.user_id == user_id:
                 return pid
         pid = self._next_player_id
         self._next_player_id += 1
-        # Find a free spawn near (1,1)
-        sx, sy = 1, 1
+        # Find a free spawn near map center
+        sx, sy = WORLD_W // 2, WORLD_H // 2
         x, y = self.find_free_near(sx, sy)
         self.players[pid] = Player(id=pid, user_id=user_id, x=x, y=y, xp={})
         return pid
@@ -111,7 +176,12 @@ class GameState:
             self.save_player_xp(player_id, db)
 
     def is_walkable(self, x: int, y: int) -> bool:
-        return 0 <= x < WORLD_W and 0 <= y < WORLD_H
+        if not (0 <= x < WORLD_W and 0 <= y < WORLD_H):
+            return False
+        # Water is not walkable
+        if self.tiles is not None and self.tiles[y][x] == 'W':
+            return False
+        return True
 
     def is_occupied_by_players(self, x: int, y: int) -> bool:
         return any(p.x == x and p.y == y for p in self.players.values())
@@ -119,9 +189,17 @@ class GameState:
     def is_occupied_by_monsters(self, x: int, y: int) -> bool:
         return any(m.x == x and m.y == y for m in self.monsters.values())
 
+    def is_occupied_by_resources(self, x: int, y: int) -> bool:
+        return (x, y) in self.resources
+
     def is_free(self, x: int, y: int) -> bool:
-        """Tile is in bounds and not occupied by any unit."""
-        return self.is_walkable(x, y) and not self.is_occupied_by_players(x, y) and not self.is_occupied_by_monsters(x, y)
+        """Tile is in bounds and not occupied by any unit or blocking resource."""
+        return (
+            self.is_walkable(x, y)
+            and not self.is_occupied_by_resources(x, y)
+            and not self.is_occupied_by_players(x, y)
+            and not self.is_occupied_by_monsters(x, y)
+        )
 
     def find_free_near(self, sx: int, sy: int, max_radius: int = 10) -> Tuple[int, int]:
         """Find the first free tile near the given position within a radius."""
@@ -224,6 +302,7 @@ class GameState:
     def snapshot(self):
         return {
             "world": {"w": WORLD_W, "h": WORLD_H},
+            "tiles": self.tiles or [],
             "players": {
                 pid: {
                     "x": p.x,
@@ -240,6 +319,10 @@ class GameState:
             "monsters": [
                 {"id": m.id, "type": m.kind, "name": m.kind.capitalize(), "x": m.x, "y": m.y, "hp": m.hp, "hpMax": m.hp_max, "aggro": m.aggro}
                 for m in self.monsters.values()
+            ],
+            "resources": [
+                {"x": x, "y": y, "type": r.get("type"), "hp": r.get("hp", 1)}
+                for (x, y), r in self.resources.items()
             ],
             "effects": [ {"x": x, "y": y} for (x, y), _val in self.effects.items() ],
             "pendingSpells": [
@@ -282,8 +365,32 @@ class GameState:
     def ensure_initial_monsters(self):
         if self.monsters:
             return
-        # Spawn 4 slimes near start area
-        self.spawn_slime(4, 1)
-        self.spawn_slime(6, 2)
-        self.spawn_slime(2, 5)
-        self.spawn_slime(5, 4)
+        # Spawn slimes around the map center
+        cx, cy = WORLD_W // 2, WORLD_H // 2
+        offsets = [(0, 0), (2, 0), (-2, 0), (0, 2), (0, -2)]
+        for dx, dy in offsets:
+            self.spawn_slime(cx + dx, cy + dy)
+
+    # -------------------- Gathering --------------------
+    def gather_adjacent(self, player_id: int) -> bool:
+        """Attempt to gather from a resource on the player's tile or adjacent (N/E/S/W).
+        Returns True if any resource was gathered (damaged or removed)."""
+        p = self.players.get(player_id)
+        if not p:
+            return False
+        positions = [(p.x, p.y), (p.x+1, p.y), (p.x-1, p.y), (p.x, p.y+1), (p.x, p.y-1)]
+        for pos in positions:
+            r = self.resources.get(pos)
+            if not r:
+                continue
+            # Damage resource
+            r_hp = int(r.get("hp", 1))
+            r_hp -= 1
+            if r_hp <= 0:
+                # Remove resource when depleted
+                del self.resources[pos]
+            else:
+                r["hp"] = r_hp
+            # Optional: floating number to indicate gather (small green could be client-implemented later)
+            return True
+        return False

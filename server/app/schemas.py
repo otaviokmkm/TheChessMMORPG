@@ -23,5 +23,5 @@ class Move(BaseModel):
     dy: int
 
 class ActionMessage(BaseModel):
-    type: Literal["move", "rest", "talk", "choose_class", "cast"]
+    type: Literal["move", "rest", "talk", "choose_class", "cast", "gather"]
     payload: Optional[dict] = None
