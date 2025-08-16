@@ -4,6 +4,7 @@ export const Net = {
   token: null,
   playerId: null,
   tick: 0,
+  isAdmin: false,
   connect() {
     return new Promise((resolve, reject) => {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -25,6 +26,15 @@ export const Net = {
       };
       ws.onclose = () => {};
     });
+  },
+  async fetchMe() {
+    if (!this.token) return null;
+    const res = await fetch(`${API_BASE}/auth/me`, { headers: { 'Authorization': `Bearer ${this.token}` } });
+    if (!res.ok) return null;
+    const me = await res.json();
+  // record admin flag locally for UI logic
+  this.isAdmin = !!me.is_admin;
+    return me;
   },
   sendAction(a) {
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -48,6 +58,12 @@ export const Net = {
     if (!res.ok) throw new Error('login failed');
     const data = await res.json();
     this.token = data.access_token;
+  },
+  async wipeServer() {
+    if (!this.token) throw new Error('not authed');
+    const res = await fetch(`${API_BASE}/admin/wipe`, { method: 'POST', headers: { 'Authorization': `Bearer ${this.token}` } });
+    if (!res.ok) throw new Error('wipe failed');
+    return await res.json();
   },
   onState: null,
 };

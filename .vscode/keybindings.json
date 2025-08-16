@@ -1,0 +1,12 @@
+[
+  {
+    "key": "f6",
+    "command": "workbench.action.tasks.terminate",
+    "when": "!inDebugMode"
+  },
+  {
+    "key": "f6",
+    "command": "workbench.action.debug.stop",
+    "when": "inDebugMode"
+  }
+]

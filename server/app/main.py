@@ -1,12 +1,14 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, Header
 from fastapi.responses import RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.websockets import WebSocketState
-from .auth import get_current_user, router as auth_router
+from .auth import get_current_user, router as auth_router, is_admin_user
 from .game.engine import GameEngine
 from .schemas import ActionMessage, ClientHello
+from sqlalchemy.orm import Session
+from .db import get_db
 import asyncio
 import json
 
@@ -21,7 +23,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-engine = GameEngine(tick_seconds=2.0)
+engine = GameEngine(tick_seconds=3.0)
 
 @app.on_event("startup")
 async def on_startup():
@@ -69,3 +71,14 @@ async def websocket_endpoint(ws: WebSocket):
         if ws.application_state == WebSocketState.CONNECTED:
             await ws.send_text(json.dumps({"type": "error", "message": str(ex)}))
         engine.disconnect_ws(ws)
+
+@app.post("/admin/wipe")
+async def admin_wipe(authorization: str | None = Header(default=None), db: Session = Depends(get_db)):
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing token")
+    token = authorization.split(" ", 1)[1]
+    user = await get_current_user(token=token)
+    if not is_admin_user(db, user.id):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    await engine.admin_wipe()
+    return {"status": "wiped"}

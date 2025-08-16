@@ -8,6 +8,15 @@ const game = document.getElementById('game');
 const canvas = document.getElementById('canvas');
 const hud = document.getElementById('hud');
 const tickInfo = document.getElementById('tickInfo');
+const adminWipeBtn = document.getElementById('adminWipeBtn');
+const bottomHud = document.getElementById('bottomHud');
+const classLabel = document.getElementById('classLabel');
+const hpFill = document.getElementById('hpFill');
+const mpFill = document.getElementById('mpFill');
+const xpFill = document.getElementById('xpFill');
+const hpText = document.getElementById('hpText');
+const mpText = document.getElementById('mpText');
+const xpText = document.getElementById('xpText');
 const musicToggle = document.getElementById('musicToggle');
 const classPanel = document.getElementById('classPanel');
 const spellsPanel = document.getElementById('spellsPanel');
@@ -21,6 +30,15 @@ async function doAuth(isRegister) {
   try {
     if (isRegister) await Net.register(u,p); else await Net.login(u,p);
     document.getElementById('authMsg').textContent = 'ok';
+    // Check admin status immediately after login/register (don't depend on WS connect)
+    try {
+      const me = await Net.fetchMe();
+      if (me && me.is_admin) {
+        adminWipeBtn.classList.remove('hidden');
+      }
+    } catch (e) {
+      // swallow - fetchMe may fail if token missing/invalid
+    }
     await Net.connect();
     auth.classList.add('hidden');
     game.classList.remove('hidden');
@@ -36,29 +54,76 @@ async function doAuth(isRegister) {
     document.getElementById('authMsg').textContent = e.message;
   }
 }
+adminWipeBtn.addEventListener('click', async () => {
+  if (!confirm('Wipe world state for all players? This cannot be undone.')) return;
+  if (!confirm('Are you absolutely sure?')) return;
+  adminWipeBtn.disabled = true;
+  adminWipeBtn.textContent = 'Wiping...';
+  try {
+    await Net.wipeServer();
+  } catch (e) {
+    alert('Wipe failed: ' + (e.message || e));
+  } finally {
+    adminWipeBtn.disabled = false;
+    adminWipeBtn.textContent = 'Wipe World';
+  }
+});
 
 document.getElementById('btnRegister').onclick = () => doAuth(true);
 
 document.getElementById('btnLogin').onclick = () => doAuth(false);
 
 Net.onState = (state) => {
-  ren.update(state, Net.playerId);
+  if (Net.isAdmin) adminWipeBtn.classList.remove('hidden');
+  ren.update(state, Net.playerId, Net.tick);
   tickInfo.textContent = ` Tick: ${Net.tick}`;
+  // Clear locked preview when the next tick arrives
+  if (ren.targetPreview && typeof ren.targetPreview.lockTick === 'number' && Net.tick > ren.targetPreview.lockTick) {
+    ren.targetPreview = null;
+  }
   // Update spells panel from my player
   const me = state.players[Net.playerId];
   if (me) {
     input.setClass(me.class || null);
     renderSpells(me);
+    // Update bottom HUD
+    bottomHud.classList.remove('hidden');
+    classLabel.textContent = me.class ? `Class: ${me.class}` : 'Class: -';
+    if (me.hpMax > 0) {
+      const hpPct = Math.max(0, Math.min(100, Math.round((me.hp / me.hpMax) * 100)));
+      hpFill.style.width = hpPct + '%';
+      hpText.textContent = `HP ${me.hp}/${me.hpMax}`;
+    }
+    if (me.mpMax >= 0) {
+      const mpPct = me.mpMax ? Math.max(0, Math.min(100, Math.round((me.mp / me.mpMax) * 100))) : 0;
+      mpFill.style.width = mpPct + '%';
+      mpText.textContent = `MP ${me.mp}/${me.mpMax}`;
+    }
+    const xpVal = me.xp || 0;
+    const xpMax = 10; // placeholder next level threshold
+    const xpPct = Math.max(0, Math.min(100, Math.round((xpVal / xpMax) * 100)));
+    xpFill.style.width = xpPct + '%';
+    xpText.textContent = `XP ${xpVal}/${xpMax}`;
   }
 };
+
+// Continuous render loop (~60 FPS) so targeting previews update smoothly between server ticks
+function animate() {
+  ren.draw();
+  requestAnimationFrame(animate);
+}
+requestAnimationFrame(animate);
 
 // Send any chosen action before tick ends
 setInterval(() => {
   // Casting takes priority over movement; if targeting and a target is set, send cast
   if (input.casting && input.casting.target) {
     Net.sendAction({ type: 'cast', payload: { spell: input.casting.spell, tx: input.casting.target.x, ty: input.casting.target.y } });
+    // Keep the preview visible until the next server tick
+    if (ren.targetPreview && typeof ren.targetPreview.lockTick !== 'number') {
+      ren.targetPreview.lockTick = Net.tick;
+    }
     input.casting = null;
-    ren.targetPreview = null;
   } else {
     const a = input.consumeAction();
     if (a) Net.sendAction(a);
@@ -88,7 +153,10 @@ canvas.addEventListener('mousemove', (e) => {
       if (Math.abs(dx)+Math.abs(dy) <= r) cells.push({ x: gx+dx, y: gy+dy });
     }
   }
-  ren.targetPreview = { cells, type: 'fireball' };
+  const me = ren.players[Net.playerId];
+  const range = input.casting.range || 4;
+  const inRange = !!(me && Math.abs(gx - me.x) + Math.abs(gy - me.y) <= range);
+  ren.targetPreview = { cells, type: 'fireball', inRange };
 });
 
 canvas.addEventListener('click', (e) => {
@@ -103,6 +171,15 @@ canvas.addEventListener('click', (e) => {
   const range = input.casting.range || 4;
   if (me && Math.abs(gx - me.x) + Math.abs(gy - me.y) <= range) {
     input.casting.target = { x: gx, y: gy };
+    // Build confirm preview for a short flash
+    const cells = [];
+    const r = input.casting.radius || 1;
+    for (let dx=-r; dx<=r; dx++) {
+      for (let dy=-r; dy<=r; dy++) {
+        if (Math.abs(dx)+Math.abs(dy) <= r) cells.push({ x: gx+dx, y: gy+dy });
+      }
+    }
+  ren.targetPreview = { cells, type: 'fireball', inRange: true, confirmUntil: Date.now() + 350, lockTick: Net.tick };
   }
 });
 

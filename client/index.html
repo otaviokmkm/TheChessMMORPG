@@ -26,7 +26,16 @@
     <div id="hud">
       <label class="music"><input type="checkbox" id="musicToggle"> Music</label>
       <span id="tickInfo"></span>
+  <button id="adminWipeBtn" class="admin-btn hidden" title="Admin: reset world">Wipe World</button>
     </div>
+      <div id="bottomHud" class="bottom-hud hidden">
+        <div class="stat-row">
+          <span id="classLabel" class="class-label"></span>
+        </div>
+        <div class="bar hp"><div id="hpFill" class="fill"></div><span id="hpText" class="text"></span></div>
+        <div class="bar mp"><div id="mpFill" class="fill"></div><span id="mpText" class="text"></span></div>
+        <div class="bar xp"><div id="xpFill" class="fill"></div><span id="xpText" class="text"></span></div>
+      </div>
     <!-- Draggable UIs -->
     <div id="classPanel" class="panel hidden" style="left: 24px; top: 24px;">
       <div class="panel-head" data-drag-handle>Choose Class</div>

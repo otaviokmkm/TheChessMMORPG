@@ -8,6 +8,19 @@ button:hover{filter:brightness(1.1)}
 #game{display:flex;flex-direction:column;align-items:center;padding:1rem}
 #hud{margin-top:.5rem;display:flex;gap:1rem;align-items:center}
 #hud .music{user-select:none}
+.admin-btn{background:#b02525}
+.admin-btn:hover{filter:brightness(1.05)}
+
+/* Bottom HUD */
+.bottom-hud{position:absolute;left:0;right:0;bottom:0;padding:.5rem .75rem;background:linear-gradient(180deg, rgba(0,0,0,.0), rgba(0,0,0,.5));}
+.bottom-hud .stat-row{display:flex;justify-content:center;margin-bottom:.25rem;color:#ccc;font-weight:600}
+.class-label{color:#ddd}
+.bar{position:relative;height:16px;border:1px solid #333;border-radius:6px;background:#1b1b1b;overflow:hidden;margin:.25rem auto;max-width:640px}
+.bar .fill{height:100%;width:0}
+.bar .text{position:absolute;left:8px;top:0;height:100%;display:flex;align-items:center;font-size:.8rem;color:#eee;text-shadow:0 1px 2px #000}
+.bar.hp .fill{background:linear-gradient(90deg,#b02525,#e85a5a)}
+.bar.mp .fill{background:linear-gradient(90deg,#2549b0,#5aa6e8)}
+.bar.xp .fill{background:linear-gradient(90deg,#6f5bd6,#c79cfb)}
 
 /* Panels */
 .panel{position:absolute;background:#141414;border:1px solid #333;border-radius:8px;min-width:180px;max-width:260px;color:#ddd;box-shadow:0 8px 20px rgba(0,0,0,.4)}
