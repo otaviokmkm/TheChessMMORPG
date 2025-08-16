@@ -1,0 +1,45 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run Uvicorn Server",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "C:/Users/otavi/AppData/Local/Programs/Python/Python313/python.exe",
+      "runtimeArgs": [
+        "-m",
+        "uvicorn",
+        "server.app.main:app",
+        "--reload"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "env": {},
+      "serverReadyAction": {
+        "pattern": "Uvicorn running on (http://\\u007Chttps://)(.*)",
+        "uriFormat": "%s/client/index.html",
+        "action": "openExternally"
+      }
+    },
+    {
+      "name": "Run Server Task",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "${command:workbench.action.tasks.runTask}",
+      "args": [
+        "Run Server (Py313)"
+      ],
+      "serverReadyAction": {
+        "pattern": "Uvicorn running on (http://\\u007Chttps://)(.*)",
+        "uriFormat": "%s/client/index.html",
+        "action": "openExternally"
+      }
+    }
+  ],
+  "compounds": [
+    {
+      "name": "F5: Server",
+      "configurations": ["Run Server Task"]
+    }
+  ]
+}

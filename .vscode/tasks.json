@@ -1,0 +1,20 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run Server",
+			"type": "shell",
+			"command": "C:/Users/otavi/AppData/Local/Programs/Python/Python313/python.exe -m uvicorn server.app.main:app --reload",
+			"isBackground": true,
+			"group": "build",
+			"problemMatcher": []
+		},
+		{
+			"label": "Run Server (Py313)",
+			"type": "shell",
+			"command": "C:/Users/otavi/AppData/Local/Programs/Python/Python313/python.exe -m uvicorn server.app.main:app --reload",
+			"isBackground": true,
+			"group": "build"
+		}
+	]
+}

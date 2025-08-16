@@ -1,0 +1,51 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Turn-Based RPG Prototype</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%234b8df8'/%3E%3Ctext x='50%' y='52%' dominant-baseline='middle' text-anchor='middle' font-size='36' fill='white' font-family='Segoe UI, Arial'%3ET%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="auth">
+    <h1>Login / Register</h1>
+    <form id="authForm" autocomplete="on" onsubmit="return false;">
+      <input id="username" name="username" placeholder="username" autocomplete="username" />
+      <input id="password" name="password" type="password" placeholder="password" autocomplete="current-password" />
+      <div class="row">
+        <button id="btnRegister" type="button">Register</button>
+        <button id="btnLogin" type="button">Login</button>
+      </div>
+    </form>
+    <div id="authMsg"></div>
+  </div>
+
+  <div id="game" class="hidden">
+    <canvas id="canvas" width="640" height="480"></canvas>
+    <div id="hud">
+      <label class="music"><input type="checkbox" id="musicToggle"> Music</label>
+      <span id="tickInfo"></span>
+    </div>
+    <!-- Draggable UIs -->
+    <div id="classPanel" class="panel hidden" style="left: 24px; top: 24px;">
+      <div class="panel-head" data-drag-handle>Choose Class</div>
+      <div class="panel-body">
+        <button class="class-btn" data-class="mage">Mage</button>
+        <!-- future: knight, archer -->
+      </div>
+      <div class="panel-foot">Press C to toggle</div>
+    </div>
+
+    <div id="spellsPanel" class="panel" style="right: 24px; top: 24px;">
+      <div class="panel-head" data-drag-handle>Spells</div>
+      <div class="panel-body">
+        <div id="spellsList"></div>
+      </div>
+      <div class="panel-foot">Click to select, or use hotkeys</div>
+    </div>
+  </div>
+
+  <script type="module" src="./js/main.js"></script>
+</body>
+</html>

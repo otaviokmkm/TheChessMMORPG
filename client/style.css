@@ -1,0 +1,22 @@
+body{font-family:system-ui,Segoe UI,Arial;margin:0;background:#111;color:#eee}
+#auth{max-width:360px;margin:4rem auto;padding:1rem;border:1px solid #333;border-radius:8px;background:#1b1b1b}
+#auth input{display:block;width:100%;padding:.6rem;margin:.4rem 0;background:#222;border:1px solid #333;color:#eee;border-radius:6px}
+#auth .row{display:flex;gap:.5rem}
+button{padding:.6rem 1rem;background:#4b8df8;border:0;border-radius:6px;color:#fff;cursor:pointer}
+button:hover{filter:brightness(1.1)}
+.hidden{display:none}
+#game{display:flex;flex-direction:column;align-items:center;padding:1rem}
+#hud{margin-top:.5rem;display:flex;gap:1rem;align-items:center}
+#hud .music{user-select:none}
+
+/* Panels */
+.panel{position:absolute;background:#141414;border:1px solid #333;border-radius:8px;min-width:180px;max-width:260px;color:#ddd;box-shadow:0 8px 20px rgba(0,0,0,.4)}
+.panel.hidden{display:none}
+.panel-head{padding:.4rem .6rem;background:#1f1f1f;border-bottom:1px solid #2a2a2a;font-weight:600;cursor:move;border-top-left-radius:8px;border-top-right-radius:8px}
+.panel-body{padding:.6rem}
+.panel-foot{padding:.4rem .6rem;border-top:1px solid #2a2a2a;color:#888;font-size:.85em;border-bottom-left-radius:8px;border-bottom-right-radius:8px}
+.class-btn{display:block;width:100%;margin:.25rem 0;padding:.5rem;border:1px solid #3a3a3a;background:#262626;color:#eee;border-radius:6px;cursor:pointer}
+.class-btn:hover{background:#2e2e2e}
+.spell-btn{display:flex;align-items:center;gap:.5rem;width:100%;margin:.25rem 0;padding:.4rem .5rem;border:1px solid #3a3a3a;background:#1e1e1e;color:#eee;border-radius:6px;cursor:pointer}
+.spell-btn:hover{background:#2a2a2a}
+.badge{font-size:.75em;color:#bbb;background:#242424;border:1px solid #333;border-radius:4px;padding:.05rem .3rem}
