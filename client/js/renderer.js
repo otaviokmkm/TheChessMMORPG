@@ -20,14 +20,25 @@ export class Renderer {
     this.animationFrameId = null;
     this.tiles = [];
     this.resources = [];
+  this.npcs = [];
+  this.projectiles = [];
+  // Interpolated projectile store: id -> {id, x, y, prevX, prevY, dx, dy, lastUpdate}
+  this._projectileStore = new Map();
+  this._lastStateAt = performance.now();
+  this._tickMs = 250; // expected server tick length (ms)
     
     // Settings
     this.showGrid = false;
+  // Visual scale for spell tiles (0-1). Adjusts the on-screen size of fireball and previews.
+  this.spellGfxScale = 0.7;
   }
   update(state, myId, serverTick = 0) {
+  // record when this snapshot arrived for interpolation
+  this._lastStateAt = performance.now();
     this.world = state.world;
   this.tiles = state.tiles || [];
   this.resources = state.resources || [];
+  this.npcs = state.npcs || [];
     this.players = state.players;
     this.monsters = {};
     if (state.monsters) {
@@ -35,6 +46,61 @@ export class Renderer {
         this.monsters[m.id] = m;
       }
     }
+  // Projectiles from server with interpolation support
+  const incoming = state.projectiles || [];
+  const seen = new Set();
+  for (const pr of incoming) {
+    seen.add(pr.id);
+    const existing = this._projectileStore.get(pr.id);
+    if (existing) {
+      // shift current to prev for smooth lerp to new position
+      existing.prevX = existing.x;
+      existing.prevY = existing.y;
+      existing.x = pr.x;
+      existing.y = pr.y;
+      existing.dx = pr.dx;
+      existing.dy = pr.dy;
+      existing.lastUpdate = this._lastStateAt;
+    } else {
+      // first sighting: start a bit behind along -dir so it appears to emerge from the caster side
+      const bdx = pr.dx || 0;
+      const bdy = pr.dy || 0;
+      const back = 0.45; // fraction of a tile behind
+      this._projectileStore.set(pr.id, {
+        id: pr.id,
+        x: pr.x,
+        y: pr.y,
+        prevX: pr.x - bdx * back,
+        prevY: pr.y - bdy * back,
+        dx: bdx,
+        dy: bdy,
+        lastUpdate: this._lastStateAt,
+      });
+    }
+  }
+  // prune projectiles that disappeared from server, and spawn a small impact flash at last known position
+  const removed = [];
+  for (const id of Array.from(this._projectileStore.keys())) {
+    if (!seen.has(id)) {
+      const pr = this._projectileStore.get(id);
+      if (pr) removed.push(pr);
+      this._projectileStore.delete(id);
+    }
+  }
+  // Add an impact animation where projectiles vanished (client-side flair)
+  for (const pr of removed) {
+    this.explosionAnimations.push({
+      x: Math.round(pr.x),
+      y: Math.round(pr.y),
+      frame: 0,
+      maxFrames: 14, // short
+      startTime: performance.now(),
+      type: 'impact',
+      active: true
+    });
+  }
+  // flatten for drawing
+  this.projectiles = Array.from(this._projectileStore.values());
     this.myId = myId;
     
     // Check for new fire effects and trigger explosion animations
@@ -123,8 +189,29 @@ export class Renderer {
           // subtle waves
           c.fillStyle = 'rgba(255,255,255,0.04)';
           c.fillRect(sx+2, sy+2, this.tile-4, this.tile-4);
+        } else if (ch === 'C') {
+          // cave entrance/doorway
+          c.fillStyle = '#1f4820';
+          c.fillRect(sx, sy, this.tile, this.tile);
+          c.fillStyle = '#7d6a4a';
+          c.fillRect(sx+4, sy+4, this.tile-8, this.tile-8);
+          c.fillStyle = '#111';
+          c.fillRect(sx+6, sy+6, this.tile-12, this.tile-12);
+        } else if (ch === 'M') {
+          // mine entrance/doorway - darker, more rocky appearance
+          c.fillStyle = '#2a2a2a';
+          c.fillRect(sx, sy, this.tile, this.tile);
+          c.fillStyle = '#444';
+          c.fillRect(sx+3, sy+3, this.tile-6, this.tile-6);
+          c.fillStyle = '#000';
+          c.fillRect(sx+6, sy+6, this.tile-12, this.tile-12);
+          // Add some rocky texture
+          c.fillStyle = '#666';
+          c.fillRect(sx+2, sy+2, 3, 3);
+          c.fillRect(sx+this.tile-5, sy+3, 2, 2);
+          c.fillRect(sx+4, sy+this.tile-5, 2, 3);
         } else {
-          // grass tile
+          // grass tile (default for any unknown tiles including legacy 'R')
           c.fillStyle = '#173018';
           c.fillRect(sx, sy, this.tile, this.tile);
           c.fillStyle = '#1f4820';
@@ -151,25 +238,29 @@ export class Renderer {
       }
     }
 
+    // draw NPCs (simple sprites with nameplates)
+    for (const n of this.npcs) {
+      const sx = n.x*this.tile - this.camera.x;
+      const sy = n.y*this.tile - this.camera.y;
+      // Body
+      this.drawNpc(this.ctx, sx, sy, this.tile, n);
+      // Nameplate
+      const name = n.name || 'NPC';
+      this.ctx.fillStyle = '#ffd24d';
+      this.ctx.font = '10px Segoe UI';
+      this.ctx.textAlign = 'center';
+      this.ctx.fillText(name, sx + this.tile/2, sy - 10);
+      this.ctx.textAlign = 'start';
+    }
     // draw players
     for (const [pid, p] of Object.entries(this.players)) {
       const sx = p.x*this.tile - this.camera.x;
       const sy = p.y*this.tile - this.camera.y;
       const isMe = String(pid) === String(this.myId);
-
-      if (p.class === 'mage') {
-        this.drawMage(c, sx, sy, this.tile, isMe);
-      } else {
-        c.fillStyle = isMe ? '#4b8df8' : '#9ade00';
-        c.fillRect(sx+4, sy+4, this.tile-8, this.tile-8);
-      }
-
-      // class tag
-      if (p.class) {
-        c.fillStyle = '#fff';
-        c.font = '10px Segoe UI';
-        c.fillText(p.class[0].toUpperCase(), sx + this.tile-10, sy + 10);
-      }
+      // Simple body: blue for me, green for others
+      c.fillStyle = isMe ? '#4b8df8' : '#9ade00';
+      c.fillRect(sx+4, sy+4, this.tile-8, this.tile-8);
+      // No class badge
     }
 
     // draw monsters
@@ -181,6 +272,8 @@ export class Renderer {
         // Monster body
         if (m.type === 'slime' || (m.name && m.name.toLowerCase() === 'slime')) {
           this.drawSlime(c, sx, sy, this.tile, m);
+        } else if (m.type === 'bat' || (m.name && m.name.toLowerCase() === 'bat')) {
+          this.drawBat(c, sx, sy, this.tile, m);
         } else {
           c.fillStyle = m.aggro ? '#d35c5c' : '#7bd36d';
           c.fillRect(sx+6, sy+6, this.tile-12, this.tile-12);
@@ -217,6 +310,60 @@ export class Renderer {
           c.textAlign = 'start';
         }
       }
+    }
+
+    // draw NPCs (simple sprites with nameplates)
+    for (const n of this.npcs) {
+      const sx = n.x*this.tile - this.camera.x;
+      const sy = n.y*this.tile - this.camera.y;
+      // Body
+      this.drawNpc(this.ctx, sx, sy, this.tile, n);
+      // Nameplate
+      const name = n.name || 'NPC';
+      this.ctx.fillStyle = '#ffd24d';
+      this.ctx.font = '10px Segoe UI';
+      this.ctx.textAlign = 'center';
+      this.ctx.fillText(name, sx + this.tile/2, sy - 10);
+      this.ctx.textAlign = 'start';
+    }
+
+    // draw projectiles (simple glowing fire bolts) with interpolation
+    const now = performance.now();
+    const phase = Math.max(0, Math.min(1, (now - this._lastStateAt) / this._tickMs));
+    for (const pr of this.projectiles) {
+      const ix = pr.prevX + (pr.x - pr.prevX) * phase;
+      const iy = pr.prevY + (pr.y - pr.prevY) * phase;
+      const sx = ix * this.tile - this.camera.x + this.tile/2;
+      const sy = iy * this.tile - this.camera.y + this.tile/2;
+      const r = Math.max(4, Math.floor(this.tile * 0.26));
+      c.save();
+      // Additive blending for vivid glow
+      const prevComp = c.globalCompositeOperation;
+      c.globalCompositeOperation = 'lighter';
+      // Outer soft glow
+      const grad = c.createRadialGradient(sx, sy, 1, sx, sy, r * 1.6);
+      grad.addColorStop(0, 'rgba(255,200,80,0.9)');
+      grad.addColorStop(0.6, 'rgba(255,110,0,0.55)');
+      grad.addColorStop(1, 'rgba(180,40,0,0.15)');
+      c.fillStyle = grad;
+      c.beginPath(); c.arc(sx, sy, r * 1.6, 0, Math.PI * 2); c.fill();
+      // Core
+      c.fillStyle = '#ffd27a';
+      c.beginPath(); c.arc(sx, sy, Math.max(3, r * 0.55), 0, Math.PI * 2); c.fill();
+      // Multi-segment tail for motion emphasis
+      const segs = 5;
+      const step = Math.max(6, Math.floor(this.tile * 0.28));
+      for (let i = 1; i <= segs; i++) {
+        const fade = (segs - i + 1) / (segs + 1);
+        const tx = sx - (pr.dx || 0) * step * i;
+        const ty = sy - (pr.dy || 0) * step * i;
+        const tr = Math.max(2, Math.floor(r * 0.45 * fade));
+        c.fillStyle = `rgba(255,140,20,${0.28 * fade})`;
+        c.beginPath(); c.arc(tx, ty, tr, 0, Math.PI * 2); c.fill();
+      }
+      // Restore compositing
+      c.globalCompositeOperation = prevComp;
+      c.restore();
     }
 
     // draw floating damage numbers (Ragnarok-style: fade out as they rise)
@@ -271,69 +418,32 @@ export class Renderer {
       }
     }
 
-    // draw code-based explosion animations (Tibia-style, 60 FPS)
-    this.drawExplosionAnimations();
+  // draw code-based explosion animations (Tibia-style, 60 FPS)
+  this.drawExplosionAnimations();
+  // No pending spell tile indicators
+  }
 
-    // draw pending spells (warning indicators - these are about to hit!)
-    for (const spell of this.pendingSpells) {
-      // Draw the spell area with orange/warning coloring and pulsing effect
-      const now = Date.now();
-      const pulse = 0.2 + 0.15 * (0.5 + 0.5 * Math.sin(now / 150)); // Faster pulse for urgency
-      
-      for (let dx = -spell.radius; dx <= spell.radius; dx++) {
-        for (let dy = -spell.radius; dy <= spell.radius; dy++) {
-          if (Math.abs(dx) + Math.abs(dy) <= spell.radius) {
-            const ex = spell.x + dx;
-            const ey = spell.y + dy;
-            const sx = ex * this.tile - this.camera.x;
-            const sy = ey * this.tile - this.camera.y;
-            
-            // Orange warning color with pulsing alpha
-            c.fillStyle = `rgba(255,165,0,${pulse})`;
-            c.fillRect(sx+3, sy+3, this.tile-6, this.tile-6);
-            c.strokeStyle = `rgba(255,140,0,${pulse + 0.3})`;
-            c.strokeRect(sx+2, sy+2, this.tile-4, this.tile-4);
-          }
-        }
-      }
-      
-      // Draw countdown text at spell center
-      const sx = spell.x * this.tile - this.camera.x;
-      const sy = spell.y * this.tile - this.camera.y;
-      c.save();
-      c.fillStyle = '#ffaa00';
-      c.font = 'bold 10px Segoe UI';
-      c.textAlign = 'center';
-      c.strokeStyle = '#000';
-      c.lineWidth = 1;
-      c.strokeText(`${spell.ticksRemaining}`, sx + this.tile/2, sy + this.tile/2 + 3);
-      c.fillText(`${spell.ticksRemaining}`, sx + this.tile/2, sy + this.tile/2 + 3);
-      c.restore();
-    }
-
-    // draw targeting preview
-    if (this.targetPreview && this.targetPreview.cells) {
-      // If locked for the remainder of the tick, always show solid green
-      const now = Date.now();
-      let baseColor;
-      if (typeof this.targetPreview.lockTick === 'number') {
-        baseColor = 'rgba(60,220,120,0.45)';
-      } else if (this.targetPreview.confirmUntil && now < this.targetPreview.confirmUntil) {
-        baseColor = 'rgba(60,220,120,0.45)'; // confirm flash green
-      } else {
-        // Pulse alpha for attention when prompting to cast
-        const pulse = 0.18 + 0.10 * (0.5 + 0.5 * Math.sin(now / 180));
-        baseColor = this.targetPreview.inRange
-          ? `rgba(255,220,80,${pulse})`
-          : `rgba(255,80,80,${pulse})`;
-      }
-      c.fillStyle = baseColor;
-      for (const cell of this.targetPreview.cells) {
-        const sx = cell.x*this.tile - this.camera.x;
-        const sy = cell.y*this.tile - this.camera.y;
-        c.fillRect(sx+2, sy+2, this.tile-4, this.tile-4);
-      }
-    }
+  drawNpc(ctx, x, y, size, npc) {
+    const pad = 4;
+    const w = size - pad * 2;
+    const h = size - pad * 2;
+    const cx = x + size / 2;
+    const baseY = y + size - pad;
+    ctx.save();
+    // Cloak color per type
+    const coat = npc.type === 'quest_giver' ? '#3a3a7a' : '#555';
+    ctx.fillStyle = coat;
+    ctx.fillRect(cx - w*0.35, y + pad + 6, w*0.7, h - 8);
+    // Head
+    ctx.beginPath();
+    ctx.arc(cx, y + pad + 6, w*0.18, 0, Math.PI*2);
+    ctx.fillStyle = '#f1d7c5';
+    ctx.fill();
+    // Accent
+    ctx.strokeStyle = '#ffd24d';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(cx - w*0.25, baseY - 8); ctx.lineTo(cx + w*0.25, baseY - 8); ctx.stroke();
+    ctx.restore();
   }
 
   updateDamageNumbers() {
@@ -388,14 +498,21 @@ export class Renderer {
     for (const anim of this.explosionAnimations) {
       if (!anim.active) continue;
       
-      const sx = anim.x * this.tile - this.camera.x;
-      const sy = anim.y * this.tile - this.camera.y;
+  // Center the smaller explosion within the tile using the same scale
+  const scale = this.spellGfxScale;
+  const scaled = Math.floor(this.tile * scale);
+  const offset = Math.floor((this.tile - scaled) / 2);
+  const sx = anim.x * this.tile - this.camera.x + offset;
+  const sy = anim.y * this.tile - this.camera.y + offset;
       
-      // Tibia-style fire explosion: single rectangle with animated colors and effects
+      // Tibia-style fire explosion (AoE) vs. tiny projectile impact
       const progress = anim.frame / anim.maxFrames; // 0 to 1
-      
-      // Create animated fire effect using code instead of image
-      this.drawTibiaStyleExplosion(c, sx, sy, this.tile, progress);
+      if (anim.type === 'impact') {
+        this.drawImpactFlash(c, sx + Math.floor(scaled/2) - 6, sy + Math.floor(scaled/2) - 6, 12, progress);
+      } else {
+        // Create animated fire effect using code instead of image, scaled down
+        this.drawTibiaStyleExplosion(c, sx, sy, scaled, progress);
+      }
     }
   }
   
@@ -474,6 +591,27 @@ export class Renderer {
     }
   }
 
+  drawImpactFlash(ctx, x, y, size, progress) {
+    // Small radial flash for projectile hit (quick fade)
+    const cx = x + size / 2;
+    const cy = y + size / 2;
+    const r = size * (0.5 + 0.5 * (1 - progress));
+    const alpha = 0.9 * (1 - progress);
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, alpha);
+    // Additive glow
+    const prev = ctx.globalCompositeOperation;
+    ctx.globalCompositeOperation = 'lighter';
+    const g = ctx.createRadialGradient(cx, cy, 1, cx, cy, r);
+    g.addColorStop(0, 'rgba(255,230,160,1)');
+    g.addColorStop(0.5, 'rgba(255,160,60,0.7)');
+    g.addColorStop(1, 'rgba(150,40,0,0.1)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+    ctx.globalCompositeOperation = prev;
+    ctx.restore();
+  }
+
   // --- Slime rendering ---
   drawSlime(ctx, x, y, size, m) {
     const t = performance.now() / 1000;
@@ -541,6 +679,47 @@ export class Renderer {
     }
     ctx.stroke();
 
+    ctx.restore();
+  }
+
+  // --- Bat rendering ---
+  drawBat(ctx, x, y, size, m) {
+    const t = performance.now() / 1000;
+    const flap = Math.sin(t * 12 + (m.id || 0)) * 0.5 + 0.5; // 0..1
+    const pad = 3;
+    const w = size - pad * 2;
+    const h = size - pad * 2;
+    const cx = x + size / 2;
+    const cy = y + size / 2;
+    ctx.save();
+    // Body
+    ctx.fillStyle = '#3a3a3a';
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, w*0.22, h*0.18, 0, 0, Math.PI*2);
+    ctx.fill();
+    // Head
+    ctx.beginPath();
+    ctx.ellipse(cx, cy - h*0.18, w*0.16, h*0.14, 0, 0, Math.PI*2);
+    ctx.fillStyle = '#2b2b2b';
+    ctx.fill();
+    // Ears
+    ctx.fillStyle = '#444';
+    ctx.beginPath(); ctx.moveTo(cx - w*0.1, cy - h*0.28); ctx.lineTo(cx - w*0.04, cy - h*0.18); ctx.lineTo(cx - w*0.16, cy - h*0.18); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(cx + w*0.1, cy - h*0.28); ctx.lineTo(cx + w*0.04, cy - h*0.18); ctx.lineTo(cx + w*0.16, cy - h*0.18); ctx.closePath(); ctx.fill();
+    // Eyes
+    ctx.fillStyle = m.aggro ? '#ff5555' : '#dddddd';
+    ctx.beginPath(); ctx.arc(cx - w*0.05, cy - h*0.2, 2, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx + w*0.05, cy - h*0.2, 2, 0, Math.PI*2); ctx.fill();
+    // Wings
+    const wingSpan = w * 0.46 + flap * 6;
+    ctx.strokeStyle = '#454545';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.quadraticCurveTo(cx - wingSpan * 0.6, cy - 6 - flap*3, cx - wingSpan, cy + 4);
+    ctx.moveTo(cx, cy);
+    ctx.quadraticCurveTo(cx + wingSpan * 0.6, cy - 6 - flap*3, cx + wingSpan, cy + 4);
+    ctx.stroke();
     ctx.restore();
   }
 

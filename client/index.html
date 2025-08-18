@@ -3,22 +3,222 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Turn-Based RPG Prototype</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%234b8df8'/%3E%3Ctext x='50%' y='52%' dominant-baseline='middle' text-anchor='middle' font-size='36' fill='white' font-family='Segoe UI, Arial'%3ET%3C/text%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="style.css" />
+  <title>Tickwars Online</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23ff6b35'/%3E%3Ctext x='50%' y='52%' dominant-baseline='middle' text-anchor='middle' font-size='28' fill='white' font-family='Segoe UI, Arial'%3E⚔%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="style.css?v=20250818_1" />
 </head>
 <body>
   <div id="auth">
-    <h1>Login / Register</h1>
-    <form id="authForm" autocomplete="on" onsubmit="return false;">
-      <input id="username" name="username" placeholder="username" autocomplete="username" />
-      <input id="password" name="password" type="password" placeholder="password" autocomplete="current-password" />
-      <div class="row">
-        <button id="btnRegister" type="button">Register</button>
-        <button id="btnLogin" type="button">Login</button>
+    <div class="login-background">
+      <div class="magic-particles"></div>
+      <div class="login-container">
+        <div class="game-logo">
+          <h1 class="logo-title">TICKWARS</h1>
+          <div class="logo-subtitle">ONLINE</div>
+          <div class="logo-tagline">⚔️ Strategic Magic Combat ⚔️</div>
+        </div>
+        
+        <div class="login-form">
+          <div class="form-glow">
+            <form id="authForm" autocomplete="on" onsubmit="return false;">
+              <input id="username" name="username" placeholder="Enter your username..." autocomplete="username" />
+              <input id="password" name="password" type="password" placeholder="Enter your password..." autocomplete="current-password" />
+              <div class="button-row">
+                <button id="btnRegister" type="button" class="btn-primary">Create Account</button>
+                <button id="btnLogin" type="button" class="btn-secondary">Login</button>
+              </div>
+            </form>
+            <div id="authMsg" class="auth-message"></div>
+          </div>
+        </div>
+        
+        <div class="game-features">
+          <div class="feature">
+            <div class="feature-icon">🎯</div>
+            <div class="feature-text">
+              <div class="feature-title">Strategic Combat</div>
+              <div class="feature-desc">Turn-based tactical battles</div>
+            </div>
+          </div>
+          <div class="feature">
+            <div class="feature-icon">⚡</div>
+            <div class="feature-text">
+              <div class="feature-title">Magic Warfare</div>
+              <div class="feature-desc">Cast powerful spells</div>
+            </div>
+          </div>
+          <div class="feature">
+            <div class="feature-icon">🏰</div>
+            <div class="feature-text">
+              <div class="feature-title">Territory Control</div>
+              <div class="feature-desc">Conquer and defend lands</div>
+            </div>
+          </div>
+        </div>
       </div>
-    </form>
-    <div id="authMsg"></div>
+    </div>
+  </div>
+
+  <!-- Help/Tutorial UI -->
+  <div id="helpOverlay" class="help-overlay hidden">
+    <div class="help-modal">
+      <div class="help-header">
+        <h2>Welcome to Tickwars Online!</h2>
+        <button id="helpClose" class="help-close">×</button>
+      </div>
+      <div class="help-content">
+        <div class="help-section">
+          <h3>🎮 Basic Controls</h3>
+          <ul>
+            <li><strong>WASD or Arrow Keys</strong> - Move your character</li>
+            <li><strong>G or Right-click</strong> - Gather resources</li>
+            <li><strong>Left-click</strong> - Cast spells (when selected)</li>
+          </ul>
+        </div>
+        
+        <div class="help-section">
+          <h3>⌨️ Keyboard Shortcuts</h3>
+          <ul>
+            <li><strong>C</strong> - Open Class Selection</li>
+            <li><strong>I</strong> - Toggle Inventory</li>
+            <li><strong>Q</strong> - Toggle Quest Log</li>
+            <li><strong>E</strong> - Toggle Equipment</li>
+            <li><strong>K</strong> - Toggle Skills</li>
+            <li><strong>P</strong> - Toggle Character Stats</li>
+            <li><strong>J</strong> - Toggle Achievements</li>
+            <li><strong>T</strong> - Talk to nearby NPCs</li>
+            <li><strong>⚙️</strong> - Settings Menu</li>
+            <li><strong>ESC</strong> - Close All Panels</li>
+          </ul>
+        </div>
+        
+        <div class="help-section">
+          <h3>⚔️ Combat & Spells</h3>
+          <ul>
+            <li><strong>1</strong> - Select Fireball (Mage class) or click it in the Spells panel</li>
+            <li>Left-click to cast in the clicked direction (or use WASD/Arrows)</li>
+            <li>No target indicators are shown; projectiles travel in straight lines</li>
+            <li>Spells resolve on tick; time your shots so enemies can’t sidestep</li>
+          </ul>
+        </div>
+        
+        <div class="help-section">
+          <h3>�️ NPCs & Quests</h3>
+          <ul>
+            <li><strong>Click on NPCs</strong> - Talk to NPCs when you're adjacent to them</li>
+            <li><strong>T key</strong> - Alternative way to talk to nearby NPCs</li>
+            <li><strong>Quest Log (Q)</strong> - Track your active quests and objectives</li>
+            <li>NPCs will play audio when you interact with them</li>
+            <li>Complete quests by fulfilling objectives shown in the Quest Log</li>
+          </ul>
+        </div>
+        
+        <div class="help-section">
+          <h3>�📦 Resources & Items</h3>
+          <ul>
+            <li>Gather wood from trees, stone from rocks</li>
+            <li>Kill monsters for gold and rare drops</li>
+            <li>Items automatically go to inventory</li>
+            <li>Use materials for crafting (coming soon!)</li>
+          </ul>
+        </div>
+      </div>
+      
+      <div class="help-footer">
+        <label class="help-checkbox">
+          <input type="checkbox" id="neverShowHelp"> Never show this again
+        </label>
+        <button id="helpGotIt" class="help-button">Got it!</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Changelog UI -->
+  <div id="changelogOverlay" class="help-overlay hidden">
+    <div class="help-modal">
+      <div class="help-header">
+        <h2>📋 Changelog</h2>
+        <button id="changelogClose" class="help-close">×</button>
+      </div>
+      <div class="help-content">
+        <div class="changelog-content">
+          <div class="changelog-entry">
+            <h3>🎮 Version 1.2.0 - Enhanced UI & Features</h3>
+            <p class="changelog-date">Released: January 2025</p>
+            <ul>
+              <li><strong>New:</strong> Advanced inventory system with visual item display</li>
+              <li><strong>New:</strong> Equipment panel for gear management</li>
+              <li><strong>New:</strong> Skill tree system for character progression</li>
+              <li><strong>New:</strong> Achievement system with unlock rewards</li>
+              <li><strong>New:</strong> Changelog viewer (this window!)</li>
+              <li><strong>Improved:</strong> Enhanced login UI with better animations</li>
+              <li><strong>Improved:</strong> Draggable panels with position saving</li>
+              <li><strong>Fixed:</strong> Login UI now properly disappears after authentication</li>
+            </ul>
+          </div>
+          
+          <div class="changelog-entry">
+            <h3>⚔️ Version 1.1.0 - Combat & Magic</h3>
+            <p class="changelog-date">Released: December 2024</p>
+            <ul>
+              <li><strong>New:</strong> Mage class with fireball spell casting</li>
+              <li><strong>New:</strong> Resource gathering from trees and rocks</li>
+              <li><strong>New:</strong> Monster combat with XP rewards</li>
+              <li><strong>New:</strong> Turn-based combat system (2-second turns)</li>
+              <li><strong>Improved:</strong> Enhanced graphics and animations</li>
+              <li><strong>Fixed:</strong> Various gameplay balance improvements</li>
+            </ul>
+          </div>
+          
+          <div class="changelog-entry">
+            <h3>🏗️ Version 1.0.0 - Foundation</h3>
+            <p class="changelog-date">Released: November 2024</p>
+            <ul>
+              <li><strong>New:</strong> Server-authoritative multiplayer architecture</li>
+              <li><strong>New:</strong> User authentication and registration</li>
+              <li><strong>New:</strong> Real-time WebSocket communication</li>
+              <li><strong>New:</strong> Tile-based world with camera system</li>
+              <li><strong>New:</strong> Basic player movement and interaction</li>
+            </ul>
+          </div>
+        </div>
+        
+        <div class="changelog-footer">
+          <p>For complete changelog and development updates, visit:</p>
+          <a href="https://github.com/otaviokmkm/TheChessMMORPG" target="_blank" class="github-link">
+            🔗 GitHub Repository
+          </a>
+        </div>
+      </div>
+      
+      <div class="help-footer">
+        <button id="changelogGotIt" class="help-button">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Mining Minigame UI -->
+  <div id="minigameOverlay" class="help-overlay hidden">
+    <div class="help-modal minigame-modal">
+      <div class="help-header">
+        <h2>⛏️ Mining</h2>
+        <button id="minigameClose" class="help-close">×</button>
+      </div>
+      <div class="help-content minigame-content">
+        <div class="minigame-stats">
+          <div>Type: <span id="miningType">Rock</span></div>
+          <div>Round: <span id="miningRound">1</span>/<span id="miningRounds">3</span></div>
+          <div>Successes: <span id="miningSuccess">0</span></div>
+          <div>Tries Left: <span id="miningTries">3</span></div>
+          <div>Skill Lv: <span id="miningLevel">1</span></div>
+        </div>
+        <canvas id="minigameCanvas" width="300" height="300"></canvas>
+        <div class="minigame-hint">Click when the shrinking ring hits the target!</div>
+      </div>
+      <div class="help-footer">
+        <button id="minigameStartBtn" class="help-button">Start</button>
+      </div>
+    </div>
   </div>
 
   <div id="game" class="hidden">
@@ -27,6 +227,7 @@
       <label class="music"><input type="checkbox" id="musicToggle"> Music</label>
       <span id="tickInfo"></span>
       <button id="settingsBtn" class="settings-btn" title="Settings">⚙️</button>
+      <button id="changelogBtn" class="changelog-btn" title="View Changelog">📋</button>
       <button id="adminWipeBtn" class="admin-btn hidden" title="Admin: reset world">Wipe World</button>
     </div>
       <div id="bottomHud" class="bottom-hud hidden">
@@ -38,16 +239,9 @@
         <div class="bar xp"><div id="xpFill" class="fill"></div><span id="xpText" class="text"></span></div>
       </div>
     <!-- Draggable UIs -->
-    <div id="classPanel" class="panel hidden" style="left: 24px; top: 24px;">
-      <div class="panel-head" data-drag-handle>Choose Class</div>
-      <div class="panel-body">
-        <button class="class-btn" data-class="mage">Mage</button>
-        <!-- future: knight, archer -->
-      </div>
-      <div class="panel-foot">Press C to toggle</div>
-    </div>
+  <!-- Class panel removed: classes are deprecated; spells unlock by requirements -->
 
-    <div id="spellsPanel" class="panel" style="right: 24px; top: 24px;">
+    <div id="spellsPanel" class="panel hidden" style="right: 24px; top: 24px;">
       <div class="panel-head" data-drag-handle>Spells</div>
       <div class="panel-body">
         <div id="spellsList"></div>
@@ -65,8 +259,149 @@
       </div>
       <div class="panel-foot">Press ⚙️ to toggle</div>
     </div>
+
+    <div id="inventoryPanel" class="panel hidden" style="left: 24px; top: 120px;">
+      <div class="panel-head" data-drag-handle>Inventory</div>
+      <div class="panel-body">
+        <div id="inventoryGrid" class="inventory-grid">
+          <!-- Inventory slots will be populated by JS -->
+        </div>
+        <div class="inventory-stats">
+          <small>Materials collected from trees, stones, and monsters</small>
+        </div>
+      </div>
+      <div class="panel-foot">Press I to toggle</div>
+    </div>
+
+    <div id="equipmentPanel" class="panel hidden" style="left: 200px; top: 120px;">
+      <div class="panel-head" data-drag-handle>Equipment</div>
+      <div class="panel-body">
+        <div class="equipment-slots">
+          <div class="equipment-slot" data-slot="helmet">
+            <span class="slot-label">Helmet</span>
+            <div class="slot-item empty"></div>
+          </div>
+          <div class="equipment-slot" data-slot="armor">
+            <span class="slot-label">Armor</span>
+            <div class="slot-item empty"></div>
+          </div>
+          <div class="equipment-slot" data-slot="weapon">
+            <span class="slot-label">Weapon</span>
+            <div class="slot-item empty"></div>
+          </div>
+          <div class="equipment-slot" data-slot="boots">
+            <span class="slot-label">Boots</span>
+            <div class="slot-item empty"></div>
+          </div>
+        </div>
+      </div>
+      <div class="panel-foot">Press E to toggle</div>
+    </div>
+
+    <div id="skillTreePanel" class="panel hidden" style="left: 380px; top: 120px;">
+      <div class="panel-head" data-drag-handle>Skills</div>
+      <div class="panel-body">
+        <div class="skill-tree">
+          <div class="skill-branch" data-class="mage">
+            <h4>Mage Skills</h4>
+            <div class="skill-node" data-skill="fireball-upgrade">
+              <span class="skill-name">Enhanced Fireball</span>
+              <span class="skill-level">0/5</span>
+            </div>
+            <div class="skill-node" data-skill="mana-regen">
+              <span class="skill-name">Mana Regeneration</span>
+              <span class="skill-level">0/3</span>
+            </div>
+            <div class="skill-node locked" data-skill="ice-shard">
+              <span class="skill-name">Ice Shard</span>
+              <span class="skill-level">Locked</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="panel-foot">Press K to toggle</div>
+    </div>
+
+    <div id="characterPanel" class="panel hidden" style="left: 560px; top: 120px;">
+      <div class="panel-head" data-drag-handle>Character</div>
+      <div class="panel-body">
+        <div class="character-stats">
+          <div class="stat-row">
+            <span class="stat-label">Level:</span>
+            <span id="charLevel">1</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Strength:</span>
+            <span id="charStrength">10</span>
+            <button class="stat-btn" data-stat="strength">+</button>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Intelligence:</span>
+            <span id="charIntelligence">10</span>
+            <button class="stat-btn" data-stat="intelligence">+</button>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Dexterity:</span>
+            <span id="charDexterity">10</span>
+            <button class="stat-btn" data-stat="dexterity">+</button>
+          </div>
+          <div class="stat-points">
+            <span>Available Points: </span>
+            <span id="availablePoints">0</span>
+          </div>
+        </div>
+      </div>
+      <div class="panel-foot">Press P to toggle</div>
+    </div>
+
+    <div id="achievementPanel" class="panel hidden" style="left: 740px; top: 120px;">
+      <div class="panel-head" data-drag-handle>Achievements</div>
+      <div class="panel-body">
+        <div class="achievement-list">
+          <div class="achievement completed" data-achievement="first-kill">
+            <span class="achievement-icon">⚔️</span>
+            <div class="achievement-info">
+              <span class="achievement-name">First Blood</span>
+              <small class="achievement-desc">Kill your first monster</small>
+            </div>
+          </div>
+          <div class="achievement locked" data-achievement="tree-cutter">
+            <span class="achievement-icon">🌳</span>
+            <div class="achievement-info">
+              <span class="achievement-name">Lumberjack</span>
+              <small class="achievement-desc">Cut down 10 trees</small>
+            </div>
+          </div>
+          <div class="achievement locked" data-achievement="rock-breaker">
+            <span class="achievement-icon">⛏️</span>
+            <div class="achievement-info">
+              <span class="achievement-name">Miner</span>
+              <small class="achievement-desc">Break 10 rocks</small>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="panel-foot">Press A to toggle</div>
+    </div>
+
+    <!-- Chat Panel -->
+    <div id="chatPanel" class="panel" style="left: 24px; bottom: 24px; top: auto;">
+      <div class="panel-head" data-drag-handle>Chat</div>
+      <div class="panel-body chat-body">
+        <div class="chat-tabs">
+          <button id="chatTabSystem" class="chat-tab active" data-tab="system">System</button>
+          <button id="chatTabGlobal" class="chat-tab" data-tab="global">Global</button>
+        </div>
+        <div id="chatViewSystem" class="chat-view active"></div>
+        <div id="chatViewGlobal" class="chat-view"></div>
+      </div>
+      <div class="panel-foot chat-input-row">
+        <input id="chatInput" class="chat-input" placeholder="Type message... (Enter to send)" />
+        <button id="chatSendBtn" class="chat-send">Send</button>
+      </div>
+    </div>
   </div>
 
-  <script type="module" src="./js/main.js"></script>
+  <script type="module" src="./js/main.js?v=20250818_2"></script>
 </body>
 </html>

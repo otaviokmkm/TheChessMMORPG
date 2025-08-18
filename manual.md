@@ -35,13 +35,13 @@ World & Rules
  - PvP damage: players are affected by AoE spell tiles (e.g., Fireball) and take damage if standing in an effect.
  - Death and respawn: when a player's HP reaches 0, they respawn at world center with full HP. If a slime occupies the spawn tile at that moment, the player immediately dies (lethal spawn hazard).
  - Terrain: the world is a forest with a large pond.
-   - Tiles: `G` = grass (walkable), `W` = water (not walkable).
+   - Tiles: `G` = grass (walkable), `W` = water (not walkable), `C` = cave entrance (walkable, teleports to cave), `M` = mine entrance (walkable, teleports to cave).
    - Resources: trees and rocks are placed on grass tiles; they block movement until gathered. Each has small HP and is removed on depletion.
  - Gathering: press `G` or right-click the canvas (when not casting) to gather a resource on your tile or adjacent (N/E/S/W). Each gather reduces resource HP by 1; when HP reaches 0 the resource disappears.
 
 Server snapshot fields
 - `world`: `{ w, h }`
-- `tiles`: array of strings (`'G'`/`'W'`) for each row
+- `tiles`: array of strings (`'G'`/`'W'`/`'C'`/`'M'`) for each row
 - `players`: positions/stats
 - `monsters`: positions/stats
 - `resources`: list of `{ x, y, type: 'tree'|'rock', hp }`
@@ -51,12 +51,10 @@ Add classes: augment `state.Player` with class levels/xp and add leveling logic 
 
 Make a log of everyupdate of the code in the file "manual"
 
-Run with F5
-- Press F5 in VS Code and pick "F5: Server" or "Run Server Task" to start Uvicorn.
-- The browser opens to `/client/index.html` automatically when the server is ready.
- - Press F6 to stop the running server task (or stop debugging if active).
 
 Changelog
+- NPCs: Added Mine Girl NPC positioned near the Cave Girl. She provides a mining quest to explore the dangerous mine depths. (2025-08-16)
+- World: Added mine entrance tile 'M' next to the cave entrance. Stepping on the mine entrance teleports players to the cave map, similar to the cave entrance. Mine entrance has a distinct rocky, darker appearance. (2025-08-16)
 - World: Added forest tilemap with a large pond; water is impassable. Server now streams `tiles` and `resources` to clients. (2025-08-16)
 - Resources: Trees and rocks spawn across grass. They block movement and are gatherable (G key or right-click); each gather reduces HP; removed when depleted. (2025-08-16)
 - Tick rate: Server tick speed set to 1 second. (2025-08-16)
@@ -80,6 +78,8 @@ Changelog
 - Fixed damage numbers: Damage numbers now only appear once when damage is dealt, preventing duplicates and repetition. Server now tracks damage per tick to prevent multiple numbers from appearing for the same damage instance. (2025-08-16)
 - World: Added a 2-tile wide bridge connecting the central island to the mainland, allowing players to escape from being trapped in the lake. Bridge is generated during map creation and visible after admin world wipe. (2025-08-16)
 - UI: Added settings menu with gear icon (⚙️) in the HUD. Initial setting: Grid toggle to show/hide tile grid lines. Settings panel is draggable like other panels. (2025-08-16)
+- UI: Added comprehensive game interface with 5 new panels - Inventory (I key), Equipment (E key), Skills (K key), Character (P key), and Achievements (J key). All panels are draggable with close buttons and keyboard shortcuts. ESC closes all panels. Sample data included for demonstration. (2025-08-16)
+- Game: Renamed to "Tickwars Online" - redesigned login screen with flashy, attractive wizard-themed design. Removed spells UI and old map from login screen for cleaner presentation. (2025-08-16)
 
 Admin World Wipe (2025-08-16)
 - Added admin-only HTTP endpoint `POST /admin/wipe` that resets the in-memory world state: clears monsters and effects, resets all players to spawn with base stats (hp/mp), clears class, spells, and xp; preserves user accounts (usernames/passwords in DB untouched). Map tiles/resources are preserved.

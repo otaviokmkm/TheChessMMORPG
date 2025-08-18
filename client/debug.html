@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug Authentication</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .form { margin: 20px 0; }
+        input { margin: 5px; padding: 8px; }
+        button { margin: 5px; padding: 8px 16px; }
+        #output { background: #f0f0f0; padding: 10px; margin: 20px 0; white-space: pre-wrap; }
+    </style>
+</head>
+<body>
+    <h1>Authentication Debug</h1>
+    
+    <div class="form">
+        <h3>Register</h3>
+        <input type="text" id="regUsername" placeholder="Username">
+        <input type="password" id="regPassword" placeholder="Password">
+        <button onclick="testRegister()">Register</button>
+    </div>
+    
+    <div class="form">
+        <h3>Login</h3>
+        <input type="text" id="loginUsername" placeholder="Username">
+        <input type="password" id="loginPassword" placeholder="Password">
+        <button onclick="testLogin()">Login</button>
+    </div>
+    
+    <div class="form">
+        <h3>WebSocket Test</h3>
+        <button onclick="testWebSocket()">Test WebSocket Connection</button>
+    </div>
+    
+    <div id="output"></div>
+
+    <script type="module">
+        import { Net } from './js/net.js';
+        
+        window.Net = Net;
+        
+        function log(message) {
+            const output = document.getElementById('output');
+            output.textContent += new Date().toLocaleTimeString() + ': ' + message + '\n';
+            console.log(message);
+        }
+        
+        window.testRegister = async function() {
+            const username = document.getElementById('regUsername').value;
+            const password = document.getElementById('regPassword').value;
+            try {
+                log(`Registering: ${username}`);
+                await Net.register(username, password);
+                log(`Registration successful! Token: ${Net.token?.substring(0, 20)}...`);
+            } catch (e) {
+                log(`Registration failed: ${e.message}`);
+            }
+        };
+        
+        window.testLogin = async function() {
+            const username = document.getElementById('loginUsername').value;
+            const password = document.getElementById('loginPassword').value;
+            try {
+                log(`Logging in: ${username}`);
+                await Net.login(username, password);
+                log(`Login successful! Token: ${Net.token?.substring(0, 20)}...`);
+            } catch (e) {
+                log(`Login failed: ${e.message}`);
+            }
+        };
+        
+        window.testWebSocket = async function() {
+            if (!Net.token) {
+                log('No token available. Please login first.');
+                return;
+            }
+            try {
+                log('Testing WebSocket connection...');
+                await Net.connect();
+                log('WebSocket connection successful!');
+            } catch (e) {
+                log(`WebSocket connection failed: ${e.message}`);
+            }
+        };
+        
+        window.log = log;
+    </script>
+</body>
+</html>

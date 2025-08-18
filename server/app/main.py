@@ -23,8 +23,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Keep tick at 1s and enable debug logs temporarily to diagnose timing
-engine = GameEngine(tick_seconds=1.0, debug=True)
+# Run a faster tick loop (0.25s) and keep debug logs for now
+engine = GameEngine(tick_seconds=0.25, debug=True)
 
 @app.on_event("startup")
 async def on_startup():
@@ -53,6 +53,14 @@ async def get_music():
         raise HTTPException(status_code=404, detail="Music file not found")
     return FileResponse(str(fpath), media_type="audio/mpeg", filename=fpath.name)
 
+@app.get("/media/sergeant")
+async def get_sergeant_audio():
+    root = Path(__file__).resolve().parents[2]
+    fpath = root / "Sargent audio.mp3"
+    if not fpath.exists():
+        raise HTTPException(status_code=404, detail="Sergeant audio not found")
+    return FileResponse(str(fpath), media_type="audio/mpeg", filename=fpath.name)
+
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
@@ -74,6 +82,19 @@ async def websocket_endpoint(ws: WebSocket):
         if ws.application_state == WebSocketState.CONNECTED:
             await ws.send_text(json.dumps({"type": "error", "message": str(ex)}))
         engine.disconnect_ws(ws)
+
+@app.get("/debug/state")
+async def debug_state():
+    """Debug endpoint to inspect cave entrance position"""
+    state = engine.state
+    return {
+        "world_size": {"width": state.WORLD_W, "height": state.WORLD_H},
+        "cave_entrance": {"x": state.cave_entrance[0], "y": state.cave_entrance[1]},
+        "mine_entrance": {"x": state.mine_entrance[0], "y": state.mine_entrance[1]},
+        "tile_at_cave": state.tiles[state.cave_entrance[1]][state.cave_entrance[0]],
+        "tile_at_mine": state.tiles[state.mine_entrance[1]][state.mine_entrance[0]],
+        "players": [{"id": p.id, "x": p.x, "y": p.y} for p in state.players.values()]
+    }
 
 @app.post("/admin/wipe")
 async def admin_wipe(authorization: str | None = Header(default=None), db: Session = Depends(get_db)):

@@ -3,8 +3,8 @@ from dataclasses import dataclass, field
 from typing import Dict, Tuple, Optional, Iterable, List
 from sqlalchemy.orm import Session
 
-WORLD_W = 40
-WORLD_H = 30
+WORLD_W = 60
+WORLD_H = 40
 
 @dataclass
 class Player:
@@ -14,14 +14,25 @@ class Player:
     y: int
     # Experience per class (future-proof)
     xp: Dict[str, int] = field(default_factory=dict)
-    clazz: Optional[str] = None
+    clazz: Optional[str] = None  # deprecated
     # Known spells by id/name
     spells: Dict[str, dict] = field(default_factory=dict)
+    # Inventory: item name -> count
+    inventory: Dict[str, int] = field(default_factory=dict)
+    # Simple quest tracking: quest_id -> {status: str, data: dict}
+    quests: Dict[str, dict] = field(default_factory=dict)
+    # Per-player notifications (text + ttl ticks)
+    notifications: List[Tuple[str, int]] = field(default_factory=list)
     # Vital stats
     hp: int = 10
     hp_max: int = 10
     mp: int = 0
     mp_max: int = 0
+    # Runtime-only fields (not persisted): cooldowns and casting state
+    # cooldowns: Dict[str, float] -> monotonic "ready at" time
+    # casting: Optional[dict] -> { spell, target(x,y), end: float, rng, rad, mana }
+    cooldowns: Dict[str, float] = field(default_factory=dict)
+    casting: Optional[dict] = None
 
 @dataclass
 class Monster:
@@ -39,6 +50,7 @@ class Monster:
     spawn_x: int = 0  # original spawn location for roaming
     spawn_y: int = 0
     roam_radius: int = 3  # maximum distance from spawn when roaming
+    last_attack_time: float = 0  # cooldown for attacks
 
 @dataclass
 class PendingSpell:
@@ -52,32 +64,71 @@ class PendingSpell:
     ticks_remaining: int
     original_caster_pos: tuple  # (x, y) when cast was initiated
 
+@dataclass
+class Projectile:
+    id: int
+    caster_id: int
+    x: int
+    y: int
+    dx: int
+    dy: int
+    speed: int  # tiles per tick
+    ttl: int    # remaining tiles to travel
+    dmg: int = 10
+    # Prevent immediate movement on spawn tick so clients can see it travel
+    just_spawned: bool = True
+
 class GameState:
     def __init__(self):
         # Players and identifiers
         self.players: Dict[int, Player] = {}
-        self._next_player_id: int = 1
+        self._next_player_id = 1
         # simple AoE effects map: {(x,y): (ttl, source_pid)}
-        self.effects: Dict[Tuple[int, int], tuple] = {}
+        self.effects: Dict[Tuple[int, int], Tuple[int, Optional[int]]] = {}
         # Monsters
         self.monsters: Dict[int, Monster] = {}
-        self._next_monster_id: int = 1
+        self._next_monster_id = 1
         # Floating damage numbers: {(x, y): [(damage, ttl), ...]}
-        self.damage_numbers: Dict[Tuple[int, int], list] = {}
+        self.damage_numbers: Dict[Tuple[int, int], List[Tuple[int, int]]] = {}
         # Pending spells (for dodge mechanics)
-        self.pending_spells: list[PendingSpell] = []
+        self.pending_spells: List[PendingSpell] = []
+        # Moving projectiles
+        self.projectiles: Dict[int, Projectile] = {}
+        self._next_projectile_id = 1
         # Track damage dealt this tick to prevent duplicate numbers
         self._damage_this_tick: Dict[Tuple[int, int], int] = {}
         # Tile map and resources
-        # tiles: list of strings with characters: 'G' (grass), 'W' (water)
+        # tiles: list of chars: 'G' grass, 'W' water, 'R' cave wall (solid), 'C' cave entrance, 'M' mine entrance
         self.tiles: Optional[List[str]] = None
-        # resources indexed by (x,y) -> {"type": "tree"|"rock", "hp": int}
-        self.resources: Dict[Tuple[int, int], Dict[str, int | str]] = {}
+        # resources indexed by (x,y) -> {"type": "tree", "hp": int}
+        self.resources: Dict[Tuple[int, int], dict] = {}
+        # Cave entrance position (set during gen)
+        self.cave_entrance: Tuple[int, int] = (WORLD_W - 8, WORLD_H // 2)
+        # Mine entrance position (set during gen)
+        self.mine_entrance: Tuple[int, int] = (WORLD_W - 10, WORLD_H // 2)
+        # NPCs
+        self.npcs: Dict[int, dict] = {}
+        self._next_npc_id = 1
+        # Spell requirements catalog (expandable)
+        self.spell_requirements: Dict[str, dict] = {
+            "fireball": {"type": "consume_item", "item": "Firestarter Orb"}
+        }
+        # Ephemeral per-tick chat buffer (list of {pid,name,text})
+        self._chat_buffer = []
 
     # -------------------- World generation --------------------
     def ensure_map(self):
+        """Ensure the world map exists. Generate it once and keep it stable.
+        Regenerating every tick caused server-side obstacles to shift, which
+        felt like invisible walls to clients between snapshots.
+        """
         if self.tiles is None:
             self._generate_forest_map()
+            # Place NPCs after initial map gen
+            try:
+                self.ensure_initial_npcs()
+            except Exception:
+                pass
 
     def _generate_forest_map(self):
         import random, math
@@ -108,7 +159,7 @@ class GameState:
             grid[bridge_y][x] = 'G'  # Main bridge path
             if bridge_y > 0:
                 grid[bridge_y - 1][x] = 'G'  # Make bridge 2 tiles wide for easier navigation
-        # Scatter trees and rocks over grass tiles, denser toward edges
+        # Scatter trees (no rocks in forest), denser toward edges
         self.resources.clear()
         for y in range(WORLD_H):
             for x in range(WORLD_W):
@@ -121,14 +172,45 @@ class GameState:
                 edge_factor = max(
                     x, y, WORLD_W - 1 - x, WORLD_H - 1 - y
                 ) / max(WORLD_W, WORLD_H)
-                base_p = 0.08 + 0.12 * edge_factor
+                # Lower overall density of trees; no rocks in forest
+                base_p = 0.04 + 0.08 * edge_factor
                 if random.random() < base_p:
-                    if random.random() < 0.7:
-                        # tree
-                        self.resources[(x, y)] = {"type": "tree", "hp": 3}
-                    else:
-                        # rock
-                        self.resources[(x, y)] = {"type": "rock", "hp": 4}
+                    # tree only in forest
+                    self.resources[(x, y)] = {"type": "tree", "hp": 3}
+
+        # Place a single cave entrance 'C' on a reachable grass tile near the east side.
+        # Scan leftwards from the right edge along center row until we find grass.
+        ey = WORLD_H // 2
+        ex = None
+        for x in range(WORLD_W - 4, 3, -1):
+            if grid[ey][x] == 'G':
+                ex = x
+                break
+        # Fallback to a reasonable location if scan fails
+        if ex is None:
+            ex = max(3, WORLD_W - 8)
+        grid[ey][ex] = 'C'
+        self.cave_entrance = (ex, ey)
+        # Ensure the entrance tile has no blocking resource
+        self.resources.pop((ex, ey), None)
+        
+        # Place a mine entrance 'M' near the cave entrance (to the left)
+        mine_x = max(0, ex - 2)
+        mine_y = ey
+        # Make sure the mine entrance is on walkable ground
+        if mine_x >= 0 and mine_y >= 0:
+            grid[mine_y][mine_x] = 'M'
+            self.mine_entrance = (mine_x, mine_y)
+            # Ensure the mine entrance tile has no blocking resource
+            self.resources.pop((mine_x, mine_y), None)
+
+        # Guarantee a clear 3-tile-wide corridor from spawn to the cave entrance along the center row
+        sx, sy = WORLD_W // 2, WORLD_H // 2
+        x0, x1 = sorted([sx, ex])
+        for x in range(x0, x1 + 1):
+            for yy in range(max(0, ey - 1), min(WORLD_H, ey + 2)):
+                grid[yy][x] = 'G'
+                self.resources.pop((x, yy), None)
         # Save tiles as strings
         self.tiles = [''.join(row) for row in grid]
 
@@ -144,8 +226,62 @@ class GameState:
         # Find a free spawn near map center
         sx, sy = WORLD_W // 2, WORLD_H // 2
         x, y = self.find_free_near(sx, sy)
-        self.players[pid] = Player(id=pid, user_id=user_id, x=x, y=y, xp={})
+        player = Player(id=pid, user_id=user_id, x=x, y=y, xp={})
+        self.players[pid] = player
+        # Grant starter spell to new players
+        self.grant_starter_spell(pid)
         return pid
+
+    # -------------------- NPCs --------------------
+    def ensure_initial_npcs(self):
+        """Create static NPCs if not present."""
+        if self.npcs:
+            return
+        # NPC 1: Sergeant on the mainland just east of the lake/bridge, outside the water
+        sx, sy = WORLD_W // 2, WORLD_H // 2
+        # Scan a small band to the east of spawn along the bridge rows (sy and sy-1)
+        serg_pos = None
+        for x in range(min(WORLD_W - 2, sx + 12), sx + 5, -1):
+            for y in (sy, max(0, sy - 1)):
+                if self.is_walkable(x, y) and not self.is_occupied_by_resources(x, y):
+                    serg_pos = (x, y)
+                    break
+            if serg_pos:
+                break
+        if not serg_pos:
+            # Fallback: first free near the end of the bridge area
+            serg_pos = self.find_free_near(sx + 8, sy)
+        nx1, ny1 = serg_pos
+        nid1 = self._next_npc_id; self._next_npc_id += 1
+        self.npcs[nid1] = {
+            "id": nid1,
+            "name": "Sergeant",
+            "type": "quest_giver",
+            "x": nx1, "y": ny1,
+        }
+        # NPC 2: Cave Girl near cave entrance (just inside)
+        ex, ey = self.cave_entrance
+        cand2 = [(ex + 2, ey), (ex + 1, ey - 1), (ex + 1, ey + 1)]
+        nx2, ny2 = next(((x, y) for (x, y) in cand2 if self.is_walkable(x, y)), (ex + 2, ey))
+        nid2 = self._next_npc_id; self._next_npc_id += 1
+        self.npcs[nid2] = {
+            "id": nid2,
+            "name": "Cave Girl",
+            "type": "quest_giver",
+            "x": nx2, "y": ny2,
+        }
+        
+        # NPC 3: Mine Girl near cave entrance (to the left of Cave Girl)
+        # Position her next to the cave entrance but not blocking it
+        cand3 = [(ex - 1, ey), (ex - 2, ey), (ex - 1, ey - 1), (ex - 1, ey + 1)]
+        nx3, ny3 = next(((x, y) for (x, y) in cand3 if self.is_walkable(x, y)), (ex - 2, ey))
+        nid3 = self._next_npc_id; self._next_npc_id += 1
+        self.npcs[nid3] = {
+            "id": nid3,
+            "name": "Mine Girl",
+            "type": "quest_giver",
+            "x": nx3, "y": ny3,
+        }
 
     def load_player_xp(self, player_id: int, db: Session):
         """Load player XP from database."""
@@ -178,9 +314,11 @@ class GameState:
     def is_walkable(self, x: int, y: int) -> bool:
         if not (0 <= x < WORLD_W and 0 <= y < WORLD_H):
             return False
-        # Water is not walkable
-        if self.tiles is not None and self.tiles[y][x] == 'W':
+        t = self.tiles[y][x] if self.tiles else 'G'
+        # Only water 'W' is unwalkable in the forest; treat any legacy 'R' as walkable
+        if t == 'W':
             return False
+        # 'C' is a cave entrance tile, walkable; 'M' is a mine entrance tile, walkable; 'G' is grass, walkable; treat everything else as walkable too
         return True
 
     def is_occupied_by_players(self, x: int, y: int) -> bool:
@@ -299,23 +437,62 @@ class GameState:
         self.pending_spells.append(spell)
         return True
 
-    def snapshot(self):
-        return {
+    def spawn_projectile(self, caster_id: int, x: int, y: int, dx: int, dy: int, speed: int, ttl: int, dmg: int = 10) -> int:
+        pid = self._next_projectile_id
+        self._next_projectile_id += 1
+        self.projectiles[pid] = Projectile(
+            id=pid, caster_id=caster_id, x=x, y=y, dx=dx, dy=dy,
+            speed=speed, ttl=ttl, dmg=dmg, just_spawned=True
+        )
+        return pid
+
+    def snapshot(self, now: Optional[float] = None):
+        snap = {
             "world": {"w": WORLD_W, "h": WORLD_H},
             "tiles": self.tiles or [],
             "players": {
                 pid: {
                     "x": p.x,
                     "y": p.y,
-                    "class": p.clazz,
+                    "class": None,
                     "hp": p.hp,
                     "hpMax": p.hp_max,
                     "mp": p.mp,
                     "mpMax": p.mp_max,
-                    "xp": (p.xp.get(p.clazz, 0) if p.clazz else 0),
+                    "xp": 0,
+                    # lightweight lists for UI
+                    "inventory": {k: v for k, v in (p.inventory or {}).items() if v > 0},
+                    "spellsKnown": list((p.spells or {}).keys()),
+                    # Include quest status and progress data for client UI
+                    "quests": {
+                        qid: {
+                            "status": (q.get("status") if isinstance(q, dict) else q),
+                            "data": (q.get("data", {}) if isinstance(q, dict) else {})
+                        }
+                        for qid, q in (p.quests or {}).items()
+                    },
+                    "notifications": [text for (text, ttl) in (p.notifications or []) if ttl > 0],
+                    # Expose lightweight casting/cooldown info for client UX
+                    "casting": (
+                        {
+                            "spell": p.casting.get("spell"),
+                            "x": p.casting.get("target", (p.x, p.y))[0],
+                            "y": p.casting.get("target", (p.x, p.y))[1],
+                            "timeLeft": max(0.0, (p.casting.get("end", 0) - (now or 0)))
+                        }
+                        if getattr(p, 'casting', None) else None
+                    ),
+                    "cooldowns": (
+                        {k: max(0.0, (v - (now or 0))) for k, v in (p.cooldowns or {}).items()}
+                        if now is not None else {}
+                    ),
                 }
                 for pid, p in self.players.items()
             },
+            "npcs": [
+                {"id": n["id"], "name": n.get("name"), "type": n.get("type"), "x": n.get("x"), "y": n.get("y")}
+                for n in self.npcs.values()
+            ],
             "monsters": [
                 {"id": m.id, "type": m.kind, "name": m.kind.capitalize(), "x": m.x, "y": m.y, "hp": m.hp, "hpMax": m.hp_max, "aggro": m.aggro}
                 for m in self.monsters.values()
@@ -325,6 +502,10 @@ class GameState:
                 for (x, y), r in self.resources.items()
             ],
             "effects": [ {"x": x, "y": y} for (x, y), _val in self.effects.items() ],
+            "projectiles": [
+                {"id": pr.id, "x": pr.x, "y": pr.y, "dx": pr.dx, "dy": pr.dy, "caster": pr.caster_id}
+                for pr in self.projectiles.values()
+            ],
             "pendingSpells": [
                 {"caster": s.caster_id, "spell": s.spell_name, "x": s.target_x, "y": s.target_y, "radius": s.cast_radius, "ticksRemaining": s.ticks_remaining}
                 for s in self.pending_spells
@@ -333,7 +514,14 @@ class GameState:
                 {"x": x, "y": y, "numbers": [{"damage": d, "ttl": t} for d, t in numbers]}
                 for (x, y), numbers in self.damage_numbers.items()
             ],
+            # Expose cave entrance marker so client can draw it differently
+            "cave": {"hasCave": True, "entrance": {"x": self.cave_entrance[0], "y": self.cave_entrance[1]}}
         }
+        # Include chat if any for this tick, then clear buffer
+        if self._chat_buffer:
+            snap["chat"] = list(self._chat_buffer)
+            self._chat_buffer.clear()
+        return snap
 
     def enforce_no_overlap(self):
         """Ensure no monster occupies the same tile as any player.
@@ -351,38 +539,99 @@ class GameState:
     def spawn_slime(self, x: int, y: int):
         mid = self._next_monster_id
         self._next_monster_id += 1
-        hp = 20  # ~2 fireballs at 10 dmg each
+        hp = 9  # dies in 3 punch hits (3 dmg each)
         # Avoid spawning on occupied tiles when possible
         fx, fy = (x, y)
         if not self.is_free(x, y):
             fx, fy = self.find_free_near(x, y)
         self.monsters[mid] = Monster(
-            id=mid, kind="slime", x=fx, y=fy, hp=hp, hp_max=hp, 
+            id=mid, kind="slime", x=fx, y=fy, hp=hp, hp_max=hp,
             dmg=6, speed=2, spawn_x=x, spawn_y=y, roam_radius=3
+        )
+        return mid
+
+    def spawn_bat(self, x: int, y: int):
+        mid = self._next_monster_id
+        self._next_monster_id += 1
+        hp = 40  # twice slime
+        fx, fy = (x, y)
+        if not self.is_free(x, y):
+            fx, fy = self.find_free_near(x, y)
+        self.monsters[mid] = Monster(
+            id=mid, kind="bat", x=fx, y=fy, hp=hp, hp_max=hp,
+            dmg=12, speed=3, xp_reward=10, aggro=True, spawn_x=x, spawn_y=y, roam_radius=5
+        )
+        return mid
+
+    def spawn_dummy(self, x: int, y: int):
+        """Spawn a stationary training dummy that never moves or attacks.
+        High HP so it can be used to test spells repeatedly.
+        """
+        mid = self._next_monster_id
+        self._next_monster_id += 1
+        fx, fy = (x, y)
+        if not self.is_free(x, y):
+            fx, fy = self.find_free_near(x, y)
+        hp = 9999
+        self.monsters[mid] = Monster(
+            id=mid,
+            kind="dummy",
+            x=fx,
+            y=fy,
+            hp=hp,
+            hp_max=hp,
+            dmg=0,
+            speed=0,
+            xp_reward=0,
+            aggro=False,
+            spawn_x=fx,
+            spawn_y=fy,
+            roam_radius=0,
         )
         return mid
 
     def ensure_initial_monsters(self):
         if self.monsters:
             return
-        # Spawn slimes around the map center
+        # Always ensure a stationary training dummy exists near spawn for testing
+        has_dummy = any(m.kind == "dummy" for m in self.monsters.values()) if self.monsters else False
+        if not has_dummy:
+            cx, cy = WORLD_W // 2, WORLD_H // 2
+            # Prefer a tile to the right of spawn; fallback to any free nearby tile
+            dx, dy = cx + 1, cy
+            if not self.is_free(dx, dy):
+                dx, dy = self.find_free_near(cx, cy)
+            self.spawn_dummy(dx, dy)
+
+        # Count non-dummy monsters; if any exist, avoid re-populating
+        non_dummy_count = sum(1 for m in self.monsters.values() if m.kind != "dummy")
+        if non_dummy_count > 0:
+            return
+        # First-run population (no non-dummy monsters yet): spawn slimes and bats
         cx, cy = WORLD_W // 2, WORLD_H // 2
         offsets = [(0, 0), (2, 0), (-2, 0), (0, 2), (0, -2)]
         for dx, dy in offsets:
             self.spawn_slime(cx + dx, cy + dy)
+        # Spawn bats in the cave area near entrance
+        ex, ey = self.cave_entrance
+        bat_spawns = [(ex + 4, ey), (ex + 8, ey - 3), (ex + 8, ey + 3), (ex + 12, ey)]
+        for bx, by in bat_spawns:
+            if 0 <= bx < WORLD_W and 0 <= by < WORLD_H:
+                self.spawn_bat(bx, by)
 
     # -------------------- Gathering --------------------
-    def gather_adjacent(self, player_id: int) -> bool:
+    def gather_adjacent(self, player_id: int) -> Optional[str]:
         """Attempt to gather from a resource on the player's tile or adjacent (N/E/S/W).
-        Returns True if any resource was gathered (damaged or removed)."""
+        Returns the resource type gathered (e.g., 'tree' or 'rock') if successful, else None."""
         p = self.players.get(player_id)
         if not p:
-            return False
+            return None
         positions = [(p.x, p.y), (p.x+1, p.y), (p.x-1, p.y), (p.x, p.y+1), (p.x, p.y-1)]
         for pos in positions:
             r = self.resources.get(pos)
             if not r:
                 continue
+            r_type = str(r.get("type", ""))
             # Damage resource
             r_hp = int(r.get("hp", 1))
             r_hp -= 1
@@ -392,5 +641,80 @@ class GameState:
             else:
                 r["hp"] = r_hp
             # Optional: floating number to indicate gather (small green could be client-implemented later)
+            return r_type or None
+        return None
+
+    # -------------------- Notifications --------------------
+    def add_notification(self, player_id: int, text: str, ttl: int = 20):
+        p = self.players.get(player_id)
+        if not p:
+            return
+        p.notifications.append((text, ttl))
+
+    def update_notifications(self):
+        for p in self.players.values():
+            if not p.notifications:
+                continue
+            updated: List[Tuple[str, int]] = []
+            for text, ttl in p.notifications:
+                if ttl > 1:
+                    updated.append((text, ttl - 1))
+            p.notifications = updated
+
+    # -------------------- Spells & Items --------------------
+    def unlock_spell_if_requirement_met(self, player_id: int, spell_name: str):
+        """Check if the player meets the requirement for the spell and unlock it."""
+        p = self.players.get(player_id)
+        if not p:
+            return False
+        if spell_name in p.spells:
+            return True
+        req = self.spell_requirements.get(spell_name)
+        if not req:
+            return False
+        # Currently only supports consume_item, which is handled on use
+        return False
+
+    def consume_item(self, player_id: int, item_name: str, amount: int = 1) -> bool:
+        p = self.players.get(player_id)
+        if not p:
+            return False
+        have = p.inventory.get(item_name, 0)
+        if have < amount:
+            return False
+        new_val = have - amount
+        if new_val > 0:
+            p.inventory[item_name] = new_val
+        else:
+            p.inventory.pop(item_name, None)
+        return True
+
+    def grant_item(self, player_id: int, item_name: str, amount: int = 1):
+        p = self.players.get(player_id)
+        if not p:
+            return
+        p.inventory[item_name] = p.inventory.get(item_name, 0) + amount
+
+    def unlock_spell(self, player_id: int, spell_name: str):
+        p = self.players.get(player_id)
+        if not p:
+            return False
+        if spell_name in p.spells:
+            return True
+        # Define known spell specs here
+        if spell_name == "fireball":
+            p.spells["fireball"] = {"name": "Fireball", "range": 3, "radius": 0, "cooldown": 2.0, "castTime": 1.0}
+            return True
+        elif spell_name == "punch":
+            p.spells["punch"] = {"name": "Punch", "range": 1, "radius": 0, "cooldown": 1.0, "castTime": 0.5}
             return True
         return False
+
+    def grant_starter_spell(self, player_id: int):
+        """Grant the punch spell to new players as a starter spell."""
+        p = self.players.get(player_id)
+        if not p:
+            return
+        # Always grant punch as starter spell
+        if "punch" not in p.spells:
+            self.unlock_spell(player_id, "punch")
